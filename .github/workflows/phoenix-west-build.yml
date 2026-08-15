@@ -1,0 +1,86 @@
+name: Phoenix-West live cell build
+
+on:
+  push:
+    branches: [feature/phoenix-west-cell-001]
+    paths:
+      - 'cells/**'
+      - 'tools/**'
+      - 'requirements-geodata.txt'
+      - '.github/workflows/phoenix-west-build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-cell:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install geodata pipeline
+        run: python -m pip install -r requirements-geodata.txt
+
+      - name: Fetch authoritative Phoenix-West sources
+        run: |
+          set -euxo pipefail
+          python tools/fetch_cell.py cells/phoenix_west_001.json
+
+      - name: Build terrain, collision and LoD2 meshes
+        run: |
+          set -euxo pipefail
+          python tools/build_cell.py cells/phoenix_west_001.json
+
+      - name: Verify derived GLBs
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          import trimesh
+
+          root = Path('data/derived/phoenix_west_001')
+          glbs = sorted(root.glob('*.glb'))
+          if len(glbs) < 3:
+              raise SystemExit(f'Expected terrain render + collision + LoD2 GLB; got {glbs}')
+
+          report = []
+          for path in glbs:
+              loaded = trimesh.load(path, force='scene')
+              geometries = list(loaded.geometry.values())
+              vertices = sum(len(g.vertices) for g in geometries)
+              faces = sum(len(g.faces) for g in geometries)
+              if vertices == 0 or faces == 0:
+                  raise SystemExit(f'Empty geometry: {path}')
+              report.append({
+                  'file': str(path),
+                  'bytes': path.stat().st_size,
+                  'geometries': len(geometries),
+                  'vertices': vertices,
+                  'triangles': faces,
+              })
+          Path('data/derived/phoenix_west_001/build_report.json').write_text(
+              json.dumps(report, indent=2) + '\n', encoding='utf-8'
+          )
+          print(json.dumps(report, indent=2))
+          PY
+
+      - name: Upload reproducible cell artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: phoenix-west-cell-001
+          path: |
+            cells/phoenix_west_001.json
+            data/raw/phoenix_west_001/manifest.json
+            data/raw/phoenix_west_001/alkis_buildings.geojson
+            data/raw/phoenix_west_001/trees.json
+            data/derived/phoenix_west_001/*.glb
+            data/derived/phoenix_west_001/build_report.json
+          compression-level: 6
+          retention-days: 30
