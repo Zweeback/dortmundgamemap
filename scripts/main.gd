@@ -1,0 +1,259 @@
+extends Node3D
+
+const CITY_BUNDLE_PATH := "res://assets/dortmund.glbraw"
+const CITY_RUNTIME_PATH := "user://dortmund.glb"
+const PLAYER_SCRIPT := preload("res://scripts/player.gd")
+const HUD_SCRIPT := preload("res://scripts/hud.gd")
+
+var player
+var hud
+var map_camera: Camera3D
+var map_mode := true
+var city_root: Node3D
+var city_size_xz := Vector2(1336.0, 1140.0)
+
+func _ready() -> void:
+	_build_environment()
+	_build_ground()
+	_build_city()
+	_build_player()
+	_build_map_camera()
+	_build_hud()
+
+func _process(_delta: float) -> void:
+	if map_mode and map_camera and player:
+		map_camera.global_position.x = player.global_position.x
+		map_camera.global_position.z = player.global_position.z
+
+func _build_environment() -> void:
+	var world_environment := WorldEnvironment.new()
+	var env := Environment.new()
+	env.background_mode = Environment.BG_COLOR
+	env.background_color = Color(0.43, 0.67, 0.88)
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.ambient_light_color = Color(0.68, 0.76, 0.92)
+	env.ambient_light_energy = 1.25
+	env.fog_enabled = false
+	env.fog_light_color = Color(0.65, 0.77, 0.91)
+	env.fog_density = 0.0008
+	env.fog_sky_affect = 0.45
+	world_environment.environment = env
+	add_child(world_environment)
+
+	var sun := DirectionalLight3D.new()
+	sun.rotation_degrees = Vector3(-48.0, -35.0, 0.0)
+	sun.light_energy = 1.15
+	sun.light_color = Color(1.0, 0.94, 0.83)
+	sun.shadow_enabled = false
+	add_child(sun)
+
+func _build_ground() -> void:
+	var ground := StaticBody3D.new()
+	ground.name = "Ground"
+
+	var shape := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	box.size = Vector3(1250.0, 0.2, 1250.0)
+	shape.shape = box
+	shape.position.y = -0.12
+	ground.add_child(shape)
+
+	var mesh_instance := MeshInstance3D.new()
+	var plane := PlaneMesh.new()
+	plane.size = Vector2(1250.0, 1250.0)
+	plane.subdivide_width = 1
+	plane.subdivide_depth = 1
+	mesh_instance.mesh = plane
+	mesh_instance.position.y = -0.01
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.12, 0.16, 0.18)
+	mat.roughness = 1.0
+	mesh_instance.material_override = mat
+	ground.add_child(mesh_instance)
+	add_child(ground)
+
+func _build_city() -> void:
+	var runtime_path := _prepare_runtime_city_file()
+	if runtime_path.is_empty():
+		push_warning("Dortmund runtime asset missing; running lightweight placeholder city.")
+		_build_placeholder_city()
+		return
+
+	var document := GLTFDocument.new()
+	var state := GLTFState.new()
+	var err := document.append_from_file(runtime_path, state)
+	if err != OK:
+		push_error("GLB runtime load failed with error %s" % err)
+		_build_placeholder_city()
+		return
+
+	var generated := document.generate_scene(state)
+	if generated == null:
+		push_error("GLB runtime scene generation failed")
+		_build_placeholder_city()
+		return
+
+	city_root = generated
+	city_root.name = "DortmundOriginalFullGeometry"
+	add_child(city_root)
+	_center_city_to_origin(city_root)
+
+func _prepare_runtime_city_file() -> String:
+	if not FileAccess.file_exists(CITY_BUNDLE_PATH):
+		return ""
+
+	var src := FileAccess.open(CITY_BUNDLE_PATH, FileAccess.READ)
+	if src == null:
+		return ""
+	var source_size := src.get_length()
+
+	if FileAccess.file_exists(CITY_RUNTIME_PATH):
+		var existing := FileAccess.open(CITY_RUNTIME_PATH, FileAccess.READ)
+		if existing != null and existing.get_length() == source_size:
+			existing.close()
+			src.close()
+			return ProjectSettings.globalize_path(CITY_RUNTIME_PATH)
+		if existing != null:
+			existing.close()
+
+	var dst := FileAccess.open(CITY_RUNTIME_PATH, FileAccess.WRITE)
+	if dst == null:
+		src.close()
+		return ""
+
+	const CHUNK_SIZE := 4 * 1024 * 1024
+	while src.get_position() < source_size:
+		var remaining := source_size - src.get_position()
+		var chunk := src.get_buffer(min(CHUNK_SIZE, remaining))
+		dst.store_buffer(chunk)
+	src.close()
+	dst.close()
+	return ProjectSettings.globalize_path(CITY_RUNTIME_PATH)
+
+func _build_placeholder_city() -> void:
+	city_root = Node3D.new()
+	city_root.name = "DortmundPlaceholder"
+	add_child(city_root)
+
+	var block_mat := StandardMaterial3D.new()
+	block_mat.albedo_color = Color(0.46, 0.50, 0.56)
+	block_mat.roughness = 0.95
+
+	for x in range(-4, 5):
+		for z in range(-4, 5):
+			if (x + z) % 3 == 0:
+				continue
+			var mesh_instance := MeshInstance3D.new()
+			var box := BoxMesh.new()
+			var height := 7.0 + float(abs((x * 13 + z * 7) % 18))
+			box.size = Vector3(8.0, height, 8.0)
+			mesh_instance.mesh = box
+			mesh_instance.position = Vector3(float(x) * 14.0, height * 0.5, float(z) * 14.0)
+			mesh_instance.material_override = block_mat
+			city_root.add_child(mesh_instance)
+
+func _apply_city_material(node: Node, material: Material) -> void:
+	if node is MeshInstance3D:
+		var mesh_instance := node as MeshInstance3D
+		mesh_instance.material_override = material
+		mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	for child in node.get_children():
+		_apply_city_material(child, material)
+
+func _build_player() -> void:
+	player = PLAYER_SCRIPT.new()
+	player.name = "Player"
+	player.position = Vector3(0.0, 1.25, 0.0)
+	add_child(player)
+
+func _build_map_camera() -> void:
+	map_camera = Camera3D.new()
+	map_camera.name = "MapCamera"
+	map_camera.projection = Camera3D.PROJECTION_ORTHOGONAL
+	map_camera.keep_aspect = Camera3D.KEEP_HEIGHT
+	map_camera.position = Vector3(0.0, 900.0, 0.0)
+	map_camera.rotation_degrees = Vector3(-90.0, 0.0, 0.0)
+	map_camera.cull_mask = 0xFFFFF
+	add_child(map_camera)
+
+	var viewport_size: Vector2 = get_viewport().get_visible_rect().size
+	var aspect: float = viewport_size.x / maxf(viewport_size.y, 1.0)
+	var required_height: float = maxf(city_size_xz.y, city_size_xz.x / maxf(aspect, 0.1))
+	map_camera.size = required_height * 1.08
+	map_camera.current = true
+
+	if player:
+		player.controls_enabled = false
+		if player.camera:
+			player.camera.current = false
+
+func _build_hud() -> void:
+	hud = HUD_SCRIPT.new()
+	hud.name = "HUD"
+	add_child(hud)
+	hud.move_changed.connect(player.set_touch_move)
+	hud.jump_pressed.connect(player.jump)
+	hud.sprint_changed.connect(player.set_touch_sprint)
+	hud.map_pressed.connect(toggle_map)
+	hud.reset_pressed.connect(player.reset_to_spawn)
+	player.coordinates_changed.connect(hud.update_position)
+	hud.set_map_mode(true)
+
+func toggle_map() -> void:
+	map_mode = not map_mode
+	player.controls_enabled = not map_mode
+	player.set_touch_move(Vector2.ZERO)
+	player.set_touch_sprint(false)
+	if player.camera:
+		player.camera.current = not map_mode
+	if map_camera:
+		map_camera.current = map_mode
+	if hud:
+		hud.set_map_mode(map_mode)
+
+func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo:
+		if event.keycode == KEY_M:
+			toggle_map()
+		elif event.keycode == KEY_R and player:
+			player.reset_to_spawn()
+
+func _center_city_to_origin(root: Node3D) -> void:
+	var bounds := _collect_mesh_bounds(root)
+	if bounds.size == Vector3.ZERO:
+		return
+	city_size_xz = Vector2(bounds.size.x, bounds.size.z)
+	var center_xz := Vector3(bounds.position.x + bounds.size.x * 0.5, bounds.position.y, bounds.position.z + bounds.size.z * 0.5)
+	# Keep the exact model geometry, but remove the large georeferenced offset for game-space stability.
+	root.global_position += Vector3(-center_xz.x, -bounds.position.y, -center_xz.z)
+
+func _collect_mesh_bounds(root: Node3D) -> AABB:
+	var found := false
+	var combined := AABB()
+	var stack: Array[Node] = [root]
+	while not stack.is_empty():
+		var node: Node = stack.pop_back() as Node
+		if node is MeshInstance3D:
+			var mi := node as MeshInstance3D
+			if mi.mesh != null:
+				var local_box: AABB = mi.get_aabb()
+				var corners: Array[Vector3] = [
+					local_box.position,
+					local_box.position + Vector3(local_box.size.x, 0, 0),
+					local_box.position + Vector3(0, local_box.size.y, 0),
+					local_box.position + Vector3(0, 0, local_box.size.z),
+					local_box.position + Vector3(local_box.size.x, local_box.size.y, 0),
+					local_box.position + Vector3(local_box.size.x, 0, local_box.size.z),
+					local_box.position + Vector3(0, local_box.size.y, local_box.size.z),
+					local_box.position + local_box.size
+				]
+				for c: Vector3 in corners:
+					var p: Vector3 = mi.global_transform * c
+					if not found:
+						combined = AABB(p, Vector3.ZERO)
+						found = true
+					else:
+						combined = combined.expand(p)
+		for child in node.get_children():
+			stack.append(child)
+	return combined
