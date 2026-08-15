@@ -2,7 +2,8 @@
 """Fetch authoritative source data for one DortmundGameMap cell.
 
 Raw downloads are intentionally written below data/raw/ and are not committed.
-The cell config is EPSG:25832; all requests preserve that CRS where supported.
+The canonical cell CRS is EPSG:25832. WGS84 bounds are stored alongside the
+canonical bounds only for APIs that require geographic coordinates.
 """
 from __future__ import annotations
 
@@ -33,6 +34,11 @@ def load_cell(path: Path) -> dict:
         raise ValueError("bbox width does not match size_m")
     if abs((maxy - miny) - float(data["size_m"])) > 1e-6:
         raise ValueError("bbox height does not match size_m")
+    if len(data.get("bbox_wgs84", [])) != 4:
+        raise ValueError("Cell must contain bbox_wgs84 [west,south,east,north]")
+    west, south, east, north = map(float, data["bbox_wgs84"])
+    if east <= west or north <= south:
+        raise ValueError("Invalid bbox_wgs84")
     return data
 
 
@@ -76,8 +82,9 @@ def find_lod2_files(expected: set[str]) -> dict[str, str]:
             if filename in expected and info.get("url"):
                 found[filename] = info["url"]
         total = int(payload.get("total_count", 0))
-        offset += len(payload.get("results", []))
-        if expected.issubset(found) or offset >= total or not payload.get("results"):
+        rows = payload.get("results", [])
+        offset += len(rows)
+        if expected.issubset(found) or offset >= total or not rows:
             break
     missing = expected - set(found)
     if missing:
@@ -87,37 +94,53 @@ def find_lod2_files(expected: set[str]) -> dict[str, str]:
 
 def alkis_url(cell: dict) -> str:
     minx, miny, maxx, maxy = cell["bbox"]
-    return url(ALKIS_WFS, {"service": "WFS", "version": "1.0.0", "request": "GetFeature", "typeName": cell["sources"]["alkis_type_name"], "outputFormat": "application/json", "srsName": "EPSG:25832", "bbox": f"{minx},{miny},{maxx},{maxy},EPSG:25832"})
+    return url(ALKIS_WFS, {
+        "service": "WFS",
+        "version": "1.0.0",
+        "request": "GetFeature",
+        "typeName": cell["sources"]["alkis_type_name"],
+        "outputFormat": "application/json",
+        "srsName": "EPSG:25832",
+        "bbox": f"{minx},{miny},{maxx},{maxy},EPSG:25832",
+    })
 
 
 def tree_url(cell: dict, *, offset: int = 0, limit: int = 100) -> str:
-    minx, miny, maxx, maxy = cell["bbox"]
-    where = f"ostwert >= {minx} and ostwert < {maxx} and hochwert >= {miny} and hochwert < {maxy}"
+    west, south, east, north = map(float, cell["bbox_wgs84"])
+    where = f"in_bbox(geo_point_2d,{south},{west},{north},{east})"
     return url(f"{ODS}/baumkataster/records", {"limit": limit, "offset": offset, "where": where})
 
 
 def dgm_url(cell: dict) -> str:
     minx, miny, maxx, maxy = cell["bbox"]
-    return url(DGM_WCS, {"SERVICE": "WCS", "VERSION": "2.0.1", "REQUEST": "GetCoverage", "COVERAGEID": cell["sources"]["dgm_coverage_id"], "FORMAT": "image/tiff", "SUBSET": [f"x({minx},{maxx})", f"y({miny},{maxy})"]})
+    return url(DGM_WCS, {
+        "SERVICE": "WCS",
+        "VERSION": "2.0.1",
+        "REQUEST": "GetCoverage",
+        "COVERAGEID": cell["sources"]["dgm_coverage_id"],
+        "FORMAT": "image/tiff",
+        "SUBSET": [f"x({minx},{maxx})", f"y({miny},{maxy})"],
+    })
 
 
 def dop_url(cell: dict, scale_factor: float = 1.0) -> str:
     minx, miny, maxx, maxy = cell["bbox"]
-    params: dict[str, object] = {"SERVICE": "WCS", "VERSION": "2.0.1", "REQUEST": "GetCoverage", "COVERAGEID": cell["sources"]["dop_coverage_id"], "FORMAT": "image/tiff", "SUBSET": [f"x({minx},{maxx})", f"y({miny},{maxy})"], "RANGESUBSET": "1,2,3"}
+    params: dict[str, object] = {
+        "SERVICE": "WCS",
+        "VERSION": "2.0.1",
+        "REQUEST": "GetCoverage",
+        "COVERAGEID": cell["sources"]["dop_coverage_id"],
+        "FORMAT": "image/tiff",
+        "SUBSET": [f"x({minx},{maxx})", f"y({miny},{maxy})"],
+        "RANGESUBSET": "1,2,3",
+    }
     if scale_factor != 1.0:
         params["SCALEFACTOR"] = scale_factor
     return url(DOP_WCS, params)
 
 
 def overpass_query_wgs84(cell: dict) -> str:
-    try:
-        from pyproj import Transformer
-    except ImportError as exc:
-        raise RuntimeError("pyproj is required for OSM fetches") from exc
-    minx, miny, maxx, maxy = cell["bbox"]
-    t = Transformer.from_crs("EPSG:25832", "EPSG:4326", always_xy=True)
-    west, south = t.transform(minx, miny)
-    east, north = t.transform(maxx, maxy)
+    west, south, east, north = map(float, cell["bbox_wgs84"])
     return f"""[out:json][timeout:60];
 (
   way[highway]({south},{west},{north},{east});
@@ -142,7 +165,12 @@ def fetch_trees(cell: dict) -> dict:
 
 
 def dry_run(cell: dict, include_dop: bool, dop_scale: float, include_osm: bool) -> dict:
-    result = {"lod2_catalog": lod2_catalog_url(), "alkis": alkis_url(cell), "trees": tree_url(cell), "dgm": dgm_url(cell)}
+    result = {
+        "lod2_catalog": lod2_catalog_url(),
+        "alkis": alkis_url(cell),
+        "trees": tree_url(cell),
+        "dgm": dgm_url(cell),
+    }
     if include_dop:
         result["dop"] = dop_url(cell, dop_scale)
     if include_osm:
@@ -186,7 +214,12 @@ def run(cell_path: Path, out_root: Path, include_dop: bool, dop_scale: float, in
         body = urllib.parse.urlencode({"data": query}).encode("utf-8")
         artifacts.append(write_bytes(out / "osm.json", request_bytes(OVERPASS, data=body)))
 
-    manifest = {"cell": cell, "fetched_at_utc": dt.datetime.now(dt.timezone.utc).isoformat(), "sources": source_urls, "artifacts": artifacts}
+    manifest = {
+        "cell": cell,
+        "fetched_at_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "sources": source_urls,
+        "artifacts": artifacts,
+    }
     write_json(out / "manifest.json", manifest)
     print(json.dumps(manifest, ensure_ascii=False, indent=2))
 
