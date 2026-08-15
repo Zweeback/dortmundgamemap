@@ -1,0 +1,26 @@
+{
+  "id": "phoenix_west_001",
+  "name": "Phoenix-West Hochofenwerk",
+  "crs": "EPSG:25832",
+  "bbox": [394744.0, 5705000.0, 395000.0, 5705256.0],
+  "size_m": 256.0,
+  "godot_axes": {
+    "x": "easting - bbox.minx",
+    "y": "height_m - vertical_origin_m",
+    "z": "-(northing - bbox.miny)"
+  },
+  "reference_points": [
+    {
+      "name": "Hochofenwerk Phoenix-West",
+      "easting": 394845.0,
+      "northing": 5705080.0,
+      "source": "https://www.ruhrgebiet-industriekultur.de/phoenix-west/"
+    }
+  ],
+  "sources": {
+    "lod2_tiles": ["lod2_do_20251103_ul_394000_5705000.gml"],
+    "alkis_type_name": "ALKIS_ADV:ALKIS_ADV_GebaeudeBauwerk",
+    "dgm_coverage_id": "nw_dgm",
+    "dop_coverage_id": "nw_dop"
+  }
+}

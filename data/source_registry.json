@@ -1,66 +1,15 @@
 {
   "crs": "EPSG:25832",
   "sources": [
-    {
-      "id": "do_lod2_gml",
-      "provider": "Stadt Dortmund",
-      "dataset": "3d-stadtmodell-gml-format",
-      "type": "buildings_lod2",
-      "api": "https://open-data.dortmund.de/api/explore/v2.1/catalog/datasets/3d-stadtmodell-gml-format/records",
-      "license": "DL-DE-Zero-2.0",
-      "priority": 1
-    },
-    {
-      "id": "do_alkis_buildings",
-      "provider": "Stadt Dortmund",
-      "dataset": "liegenschaftskataster-gebaude-bauwerke",
-      "type": "building_footprints",
-      "api": "https://open-data.dortmund.de/api/explore/v2.1/catalog/datasets/liegenschaftskataster-gebaude-bauwerke/records",
-      "wfs": "https://geoweb1.digistadtdo.de/doris_gdi/geoserver/ALKIS_ADV/ows",
-      "license": "DL-DE-Zero-2.0",
-      "priority": 1
-    },
-    {
-      "id": "do_trees",
-      "provider": "Stadt Dortmund",
-      "dataset": "baumkataster",
-      "type": "vegetation_points",
-      "api": "https://open-data.dortmund.de/api/explore/v2.1/catalog/datasets/baumkataster/records",
-      "license": "DL-DE-Zero-2.0",
-      "priority": 2
-    },
-    {
-      "id": "do_construction_current",
-      "provider": "Stadt Dortmund",
-      "dataset": "fb66-baustellen-tagesaktuell",
-      "type": "dynamic_events",
-      "api": "https://open-data.dortmund.de/api/explore/v2.1/catalog/datasets/fb66-baustellen-tagesaktuell/records",
-      "license": "DL-DE-Zero-2.0",
-      "priority": 3
-    },
-    {
-      "id": "do_parking",
-      "provider": "Stadt Dortmund",
-      "dataset": "parkhauser",
-      "type": "dynamic_parking",
-      "api": "https://open-data.dortmund.de/api/explore/v2.1/catalog/datasets/parkhauser/records",
-      "priority": 3
-    },
-    {
-      "id": "do_stops",
-      "provider": "Stadt Dortmund",
-      "dataset": "haltestellen",
-      "type": "transit_poi",
-      "api": "https://open-data.dortmund.de/api/explore/v2.1/catalog/datasets/haltestellen/records",
-      "license": "DL-DE-Zero-2.0",
-      "priority": 3
-    },
-    {
-      "id": "osm",
-      "provider": "OpenStreetMap contributors",
-      "type": "roads_pois_routing",
-      "license": "ODbL-1.0",
-      "priority": 2
-    }
+    {"id":"do_lod2_gml","provider":"Stadt Dortmund","dataset":"3d-stadtmodell-gml-format","type":"buildings_lod2","api":"https://open-data.dortmund.de/api/explore/v2.1/catalog/datasets/3d-stadtmodell-gml-format/records","license":"DL-DE-Zero-2.0","priority":1},
+    {"id":"do_alkis_buildings","provider":"Stadt Dortmund","dataset":"liegenschaftskataster-gebaude-bauwerke","type":"building_footprints","api":"https://open-data.dortmund.de/api/explore/v2.1/catalog/datasets/liegenschaftskataster-gebaude-bauwerke/records","wfs":"https://geoweb1.digistadtdo.de/doris_gdi/geoserver/ALKIS_ADV/ows","wfs_type_name":"ALKIS_ADV:ALKIS_ADV_GebaeudeBauwerk","license":"DL-DE-Zero-2.0","priority":1},
+    {"id":"nrw_dgm1","provider":"Geobasis NRW","type":"terrain_height","wcs":"https://www.wcs.nrw.de/geobasis/wcs_nw_dgm","coverage_id":"nw_dgm","resolution_m":1.0,"license":"DL-DE-Zero-2.0","priority":1},
+    {"id":"nrw_dop10","provider":"Geobasis NRW","type":"orthophoto_rgb_ir","wcs":"https://www.wcs.nrw.de/geobasis/wcs_nw_dop","coverage_id":"nw_dop","resolution_m":0.1,"license":"DL-DE-Zero-2.0","priority":2},
+    {"id":"nrw_ndom50","provider":"Geobasis NRW","type":"normalized_surface_height","wcs":"https://www.wcs.nrw.de/geobasis/wcs_nw_ndom","license":"DL-DE-Zero-2.0","priority":3},
+    {"id":"do_trees","provider":"Stadt Dortmund","dataset":"baumkataster","type":"vegetation_points","api":"https://open-data.dortmund.de/api/explore/v2.1/catalog/datasets/baumkataster/records","license":"DL-DE-Zero-2.0","priority":2},
+    {"id":"do_construction_current","provider":"Stadt Dortmund","dataset":"fb66-baustellen-tagesaktuell","type":"dynamic_events","api":"https://open-data.dortmund.de/api/explore/v2.1/catalog/datasets/fb66-baustellen-tagesaktuell/records","license":"DL-DE-Zero-2.0","priority":3},
+    {"id":"do_parking","provider":"Stadt Dortmund","dataset":"parkhauser","type":"dynamic_parking","api":"https://open-data.dortmund.de/api/explore/v2.1/catalog/datasets/parkhauser/records","priority":3},
+    {"id":"do_stops","provider":"Stadt Dortmund","dataset":"haltestellen","type":"transit_poi","api":"https://open-data.dortmund.de/api/explore/v2.1/catalog/datasets/haltestellen/records","license":"DL-DE-Zero-2.0","priority":3},
+    {"id":"osm","provider":"OpenStreetMap contributors","type":"roads_pois_routing","overpass":"https://overpass-api.de/api/interpreter","license":"ODbL-1.0","priority":2}
   ]
 }

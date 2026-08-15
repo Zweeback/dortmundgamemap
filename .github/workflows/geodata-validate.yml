@@ -1,0 +1,25 @@
+name: Geodata validate
+
+on:
+  push:
+    paths: ['cells/**','tools/**','tests/**','requirements-geodata.txt','data/source_registry.json']
+  pull_request:
+    paths: ['cells/**','tools/**','tests/**','requirements-geodata.txt','data/source_registry.json']
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile pipeline scripts
+        run: python -m py_compile tools/*.py tests/test_cell_pipeline.py
+      - name: Unit tests (no network)
+        run: python -m unittest tests/test_cell_pipeline.py
+      - name: Dry-run Phoenix-West requests
+        run: python tools/fetch_cell.py cells/phoenix_west_001.json --dry-run
