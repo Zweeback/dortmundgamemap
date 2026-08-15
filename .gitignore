@@ -1,0 +1,13 @@
+.godot/
+build/
+android-toolchain/
+*.apk
+*.idsig
+assets/*.glb
+assets/*.glbraw
+assets/*.gltf
+assets/*.bin
+data/raw/
+data/cache/
+data/derived/
+.DS_Store
