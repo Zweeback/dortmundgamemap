@@ -52,23 +52,35 @@ jobs:
               raise SystemExit(f'Expected terrain render + collision + LoD2 GLB; got {glbs}')
 
           report = []
+          bounds_by_name = {}
           for path in glbs:
               loaded = trimesh.load(path, force='scene')
               geometries = list(loaded.geometry.values())
               vertices = sum(len(g.vertices) for g in geometries)
               faces = sum(len(g.faces) for g in geometries)
+              bounds = loaded.bounds.tolist()
               if vertices == 0 or faces == 0:
                   raise SystemExit(f'Empty geometry: {path}')
+              bounds_by_name[path.name] = bounds
               report.append({
                   'file': str(path),
                   'bytes': path.stat().st_size,
                   'geometries': len(geometries),
                   'vertices': vertices,
                   'triangles': faces,
+                  'bounds_local': bounds,
               })
-          Path('data/derived/phoenix_west_001/build_report.json').write_text(
-              json.dumps(report, indent=2) + '\n', encoding='utf-8'
-          )
+
+          terrain_y = bounds_by_name['terrain_render.glb'][0][1]
+          building_names = [n for n in bounds_by_name if n.startswith('lod2_')]
+          if not building_names:
+              raise SystemExit('No LoD2 building GLB found')
+          for name in building_names:
+              building_y = bounds_by_name[name][0][1]
+              if abs(building_y - terrain_y) > 20.0:
+                  raise SystemExit(f'Vertical datum mismatch: terrain min={terrain_y}, {name} min={building_y}')
+
+          (root / 'build_report.json').write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
           print(json.dumps(report, indent=2))
           PY
 
@@ -82,6 +94,7 @@ jobs:
             data/raw/phoenix_west_001/alkis_buildings.geojson
             data/raw/phoenix_west_001/trees.json
             data/derived/phoenix_west_001/*.glb
+            data/derived/phoenix_west_001/cell_build_meta.json
             data/derived/phoenix_west_001/build_report.json
           compression-level: 6
           retention-days: 30
