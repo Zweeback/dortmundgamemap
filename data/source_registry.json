@@ -1,0 +1,66 @@
+{
+  "crs": "EPSG:25832",
+  "sources": [
+    {
+      "id": "do_lod2_gml",
+      "provider": "Stadt Dortmund",
+      "dataset": "3d-stadtmodell-gml-format",
+      "type": "buildings_lod2",
+      "api": "https://open-data.dortmund.de/api/explore/v2.1/catalog/datasets/3d-stadtmodell-gml-format/records",
+      "license": "DL-DE-Zero-2.0",
+      "priority": 1
+    },
+    {
+      "id": "do_alkis_buildings",
+      "provider": "Stadt Dortmund",
+      "dataset": "liegenschaftskataster-gebaude-bauwerke",
+      "type": "building_footprints",
+      "api": "https://open-data.dortmund.de/api/explore/v2.1/catalog/datasets/liegenschaftskataster-gebaude-bauwerke/records",
+      "wfs": "https://geoweb1.digistadtdo.de/doris_gdi/geoserver/ALKIS_ADV/ows",
+      "license": "DL-DE-Zero-2.0",
+      "priority": 1
+    },
+    {
+      "id": "do_trees",
+      "provider": "Stadt Dortmund",
+      "dataset": "baumkataster",
+      "type": "vegetation_points",
+      "api": "https://open-data.dortmund.de/api/explore/v2.1/catalog/datasets/baumkataster/records",
+      "license": "DL-DE-Zero-2.0",
+      "priority": 2
+    },
+    {
+      "id": "do_construction_current",
+      "provider": "Stadt Dortmund",
+      "dataset": "fb66-baustellen-tagesaktuell",
+      "type": "dynamic_events",
+      "api": "https://open-data.dortmund.de/api/explore/v2.1/catalog/datasets/fb66-baustellen-tagesaktuell/records",
+      "license": "DL-DE-Zero-2.0",
+      "priority": 3
+    },
+    {
+      "id": "do_parking",
+      "provider": "Stadt Dortmund",
+      "dataset": "parkhauser",
+      "type": "dynamic_parking",
+      "api": "https://open-data.dortmund.de/api/explore/v2.1/catalog/datasets/parkhauser/records",
+      "priority": 3
+    },
+    {
+      "id": "do_stops",
+      "provider": "Stadt Dortmund",
+      "dataset": "haltestellen",
+      "type": "transit_poi",
+      "api": "https://open-data.dortmund.de/api/explore/v2.1/catalog/datasets/haltestellen/records",
+      "license": "DL-DE-Zero-2.0",
+      "priority": 3
+    },
+    {
+      "id": "osm",
+      "provider": "OpenStreetMap contributors",
+      "type": "roads_pois_routing",
+      "license": "ODbL-1.0",
+      "priority": 2
+    }
+  ]
+}
