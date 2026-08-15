@@ -4,6 +4,7 @@ const CITY_BUNDLE_PATH := "res://assets/dortmund.glbraw"
 const CITY_RUNTIME_PATH := "user://dortmund.glb"
 const PLAYER_SCRIPT := preload("res://scripts/player.gd")
 const HUD_SCRIPT := preload("res://scripts/hud.gd")
+const WORLD_CELL_SCRIPT := preload("res://scripts/world_cell_loader.gd")
 
 var player
 var hud
@@ -11,11 +12,15 @@ var map_camera: Camera3D
 var map_mode := true
 var city_root: Node3D
 var city_size_xz := Vector2(1336.0, 1140.0)
+var world_cell
+var using_stream_cell := false
 
 func _ready() -> void:
 	_build_environment()
-	_build_ground()
-	_build_city()
+	using_stream_cell = _build_stream_cell()
+	if not using_stream_cell:
+		_build_ground()
+		_build_city()
 	_build_player()
 	_build_map_camera()
 	_build_hud()
@@ -24,6 +29,21 @@ func _process(_delta: float) -> void:
 	if map_mode and map_camera and player:
 		map_camera.global_position.x = player.global_position.x
 		map_camera.global_position.z = player.global_position.z
+
+func _build_stream_cell() -> bool:
+	var candidate = WORLD_CELL_SCRIPT.new()
+	candidate.name = "PhoenixWest001"
+	if not candidate.has_packaged_cell():
+		candidate.free()
+		return false
+	add_child(candidate)
+	if not candidate.load_packaged_cell():
+		candidate.queue_free()
+		return false
+	world_cell = candidate
+	city_root = candidate
+	city_size_xz = candidate.cell_size_xz
+	return true
 
 func _build_environment() -> void:
 	var world_environment := WorldEnvironment.new()
@@ -34,9 +54,6 @@ func _build_environment() -> void:
 	env.ambient_light_color = Color(0.68, 0.76, 0.92)
 	env.ambient_light_energy = 1.25
 	env.fog_enabled = false
-	env.fog_light_color = Color(0.65, 0.77, 0.91)
-	env.fog_density = 0.0008
-	env.fog_sky_affect = 0.45
 	world_environment.environment = env
 	add_child(world_environment)
 
@@ -50,19 +67,15 @@ func _build_environment() -> void:
 func _build_ground() -> void:
 	var ground := StaticBody3D.new()
 	ground.name = "Ground"
-
 	var shape := CollisionShape3D.new()
 	var box := BoxShape3D.new()
 	box.size = Vector3(1250.0, 0.2, 1250.0)
 	shape.shape = box
 	shape.position.y = -0.12
 	ground.add_child(shape)
-
 	var mesh_instance := MeshInstance3D.new()
 	var plane := PlaneMesh.new()
 	plane.size = Vector2(1250.0, 1250.0)
-	plane.subdivide_width = 1
-	plane.subdivide_depth = 1
 	mesh_instance.mesh = plane
 	mesh_instance.position.y = -0.01
 	var mat := StandardMaterial3D.new()
@@ -78,7 +91,6 @@ func _build_city() -> void:
 		push_warning("Dortmund runtime asset missing; running lightweight placeholder city.")
 		_build_placeholder_city()
 		return
-
 	var document := GLTFDocument.new()
 	var state := GLTFState.new()
 	var err := document.append_from_file(runtime_path, state)
@@ -86,13 +98,11 @@ func _build_city() -> void:
 		push_error("GLB runtime load failed with error %s" % err)
 		_build_placeholder_city()
 		return
-
 	var generated := document.generate_scene(state)
 	if generated == null:
 		push_error("GLB runtime scene generation failed")
 		_build_placeholder_city()
 		return
-
 	city_root = generated
 	city_root.name = "DortmundOriginalFullGeometry"
 	add_child(city_root)
@@ -101,12 +111,10 @@ func _build_city() -> void:
 func _prepare_runtime_city_file() -> String:
 	if not FileAccess.file_exists(CITY_BUNDLE_PATH):
 		return ""
-
 	var src := FileAccess.open(CITY_BUNDLE_PATH, FileAccess.READ)
 	if src == null:
 		return ""
 	var source_size := src.get_length()
-
 	if FileAccess.file_exists(CITY_RUNTIME_PATH):
 		var existing := FileAccess.open(CITY_RUNTIME_PATH, FileAccess.READ)
 		if existing != null and existing.get_length() == source_size:
@@ -115,12 +123,10 @@ func _prepare_runtime_city_file() -> String:
 			return ProjectSettings.globalize_path(CITY_RUNTIME_PATH)
 		if existing != null:
 			existing.close()
-
 	var dst := FileAccess.open(CITY_RUNTIME_PATH, FileAccess.WRITE)
 	if dst == null:
 		src.close()
 		return ""
-
 	const CHUNK_SIZE := 4 * 1024 * 1024
 	while src.get_position() < source_size:
 		var remaining := source_size - src.get_position()
@@ -134,11 +140,9 @@ func _build_placeholder_city() -> void:
 	city_root = Node3D.new()
 	city_root.name = "DortmundPlaceholder"
 	add_child(city_root)
-
 	var block_mat := StandardMaterial3D.new()
 	block_mat.albedo_color = Color(0.46, 0.50, 0.56)
 	block_mat.roughness = 0.95
-
 	for x in range(-4, 5):
 		for z in range(-4, 5):
 			if (x + z) % 3 == 0:
@@ -152,18 +156,10 @@ func _build_placeholder_city() -> void:
 			mesh_instance.material_override = block_mat
 			city_root.add_child(mesh_instance)
 
-func _apply_city_material(node: Node, material: Material) -> void:
-	if node is MeshInstance3D:
-		var mesh_instance := node as MeshInstance3D
-		mesh_instance.material_override = material
-		mesh_instance.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	for child in node.get_children():
-		_apply_city_material(child, material)
-
 func _build_player() -> void:
 	player = PLAYER_SCRIPT.new()
 	player.name = "Player"
-	player.position = Vector3(0.0, 1.25, 0.0)
+	player.position = world_cell.player_spawn if using_stream_cell else Vector3(0.0, 1.25, 0.0)
 	add_child(player)
 
 func _build_map_camera() -> void:
@@ -175,13 +171,11 @@ func _build_map_camera() -> void:
 	map_camera.rotation_degrees = Vector3(-90.0, 0.0, 0.0)
 	map_camera.cull_mask = 0xFFFFF
 	add_child(map_camera)
-
 	var viewport_size: Vector2 = get_viewport().get_visible_rect().size
 	var aspect: float = viewport_size.x / maxf(viewport_size.y, 1.0)
 	var required_height: float = maxf(city_size_xz.y, city_size_xz.x / maxf(aspect, 0.1))
 	map_camera.size = required_height * 1.08
 	map_camera.current = true
-
 	if player:
 		player.controls_enabled = false
 		if player.camera:
@@ -224,7 +218,6 @@ func _center_city_to_origin(root: Node3D) -> void:
 		return
 	city_size_xz = Vector2(bounds.size.x, bounds.size.z)
 	var center_xz := Vector3(bounds.position.x + bounds.size.x * 0.5, bounds.position.y, bounds.position.z + bounds.size.z * 0.5)
-	# Keep the exact model geometry, but remove the large georeferenced offset for game-space stability.
 	root.global_position += Vector3(-center_xz.x, -bounds.position.y, -center_xz.z)
 
 func _collect_mesh_bounds(root: Node3D) -> AABB:

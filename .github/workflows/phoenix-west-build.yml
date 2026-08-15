@@ -1,0 +1,167 @@
+name: Phoenix-West live cell build
+
+on:
+  push:
+    branches: [feature/phoenix-west-cell-001]
+    paths:
+      - 'cells/**'
+      - 'tools/**'
+      - 'scripts/**'
+      - 'scenes/**'
+      - 'project.godot'
+      - 'export_presets.cfg'
+      - 'requirements-geodata.txt'
+      - '.github/workflows/phoenix-west-build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-cell:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-geodata.txt
+
+      - name: Install geodata pipeline
+        run: python -m pip install -r requirements-geodata.txt
+
+      - name: Fetch authoritative Phoenix-West sources
+        run: |
+          set -euxo pipefail
+          python tools/fetch_cell.py cells/phoenix_west_001.json
+
+      - name: Build terrain, collision and LoD2 meshes
+        run: |
+          set -euxo pipefail
+          python tools/build_cell.py cells/phoenix_west_001.json
+
+      - name: Verify derived GLBs
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          import trimesh
+          root = Path('data/derived/phoenix_west_001')
+          glbs = sorted(root.glob('*.glb'))
+          if len(glbs) < 3:
+              raise SystemExit(f'Expected terrain render + collision + LoD2 GLB; got {glbs}')
+          report = []
+          bounds_by_name = {}
+          for path in glbs:
+              loaded = trimesh.load(path, force='scene')
+              geometries = list(loaded.geometry.values())
+              vertices = sum(len(g.vertices) for g in geometries)
+              faces = sum(len(g.faces) for g in geometries)
+              bounds = loaded.bounds.tolist()
+              if vertices == 0 or faces == 0:
+                  raise SystemExit(f'Empty geometry: {path}')
+              bounds_by_name[path.name] = bounds
+              report.append({'file':str(path),'bytes':path.stat().st_size,'geometries':len(geometries),'vertices':vertices,'triangles':faces,'bounds_local':bounds})
+          terrain_y = bounds_by_name['terrain_render.glb'][0][1]
+          building_names = [n for n in bounds_by_name if n.startswith('lod2_')]
+          if not building_names:
+              raise SystemExit('No LoD2 building GLB found')
+          for name in building_names:
+              if abs(bounds_by_name[name][0][1] - terrain_y) > 20.0:
+                  raise SystemExit(f'Vertical datum mismatch: {name}')
+          (root/'build_report.json').write_text(json.dumps(report,indent=2)+'\n',encoding='utf-8')
+          print(json.dumps(report,indent=2))
+          PY
+
+      - name: Stage cell as runtime Godot assets
+        run: |
+          set -euxo pipefail
+          CELL=data/derived/phoenix_west_001
+          DST=assets/cells/phoenix_west_001
+          mkdir -p "$DST"
+          cp "$CELL/terrain_render.glb" "$DST/terrain_render.glbraw"
+          cp "$CELL/terrain_collision.glb" "$DST/terrain_collision.glbraw"
+          cp "$CELL/lod2_do_20251103_ul_394000_5705000.glb" "$DST/buildings_lod2.glbraw"
+          ls -lh "$DST"
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android build tools
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platform-tools' 'build-tools;35.0.1' 'platforms;android-35'
+
+      - name: Install Godot 4.7.1 + export templates
+        run: |
+          set -euxo pipefail
+          curl -L --fail --retry 4 -o /tmp/godot.zip 'https://downloads.godotengine.org/?flavor=stable&platform=linux.64&slug=linux.x86_64.zip&version=4.7.1'
+          unzip -q /tmp/godot.zip -d /tmp/godot
+          chmod +x /tmp/godot/Godot_v4.7.1-stable_linux.x86_64
+          sudo mv /tmp/godot/Godot_v4.7.1-stable_linux.x86_64 /usr/local/bin/godot
+          curl -L --fail --retry 4 -o /tmp/templates.tpz 'https://downloads.godotengine.org/?flavor=stable&platform=templates&slug=export_templates.tpz&version=4.7.1'
+          mkdir -p "$HOME/.local/share/godot/export_templates/4.7.1.stable"
+          unzip -q /tmp/templates.tpz -d /tmp/templates
+          cp -a /tmp/templates/templates/. "$HOME/.local/share/godot/export_templates/4.7.1.stable/"
+          godot --version
+
+      - name: Configure Android export
+        run: |
+          mkdir -p "$HOME/.config/godot" "$HOME/.android"
+          JAVA_HOME_REAL="$(dirname "$(dirname "$(readlink -f "$(command -v javac)")")")"
+          ANDROID_SDK_REAL="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          cat > "$HOME/.config/godot/editor_settings-4.7.tres" <<EOF
+          [gd_resource type="EditorSettings" format=3]
+
+          [resource]
+          export/android/java_sdk_path = "$JAVA_HOME_REAL"
+          export/android/android_sdk_path = "$ANDROID_SDK_REAL"
+          EOF
+          keytool -genkeypair -v -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey -keypass android -dname 'CN=Android Debug,O=Android,C=US' -keyalg RSA -keysize 2048 -validity 10000
+
+      - name: Godot import + real cell smoke test
+        run: |
+          set -euxo pipefail
+          godot --headless --editor --path . --quit
+          godot --headless --path . --quit-after 5 2>&1 | tee /tmp/godot-smoke.log
+          grep -q 'CELL_LOADED phoenix_west_001' /tmp/godot-smoke.log
+
+      - name: Export ARM64 Android APK
+        run: |
+          mkdir -p build
+          godot --headless --path . --export-debug 'Android' "$GITHUB_WORKSPACE/build/DortmundGameMap-PhoenixWest.apk"
+          test -s build/DortmundGameMap-PhoenixWest.apk
+          unzip -l build/DortmundGameMap-PhoenixWest.apk | grep 'assets/cells/phoenix_west_001/terrain_render.glbraw'
+          unzip -l build/DortmundGameMap-PhoenixWest.apk | grep 'assets/cells/phoenix_west_001/terrain_collision.glbraw'
+          unzip -l build/DortmundGameMap-PhoenixWest.apk | grep 'assets/cells/phoenix_west_001/buildings_lod2.glbraw'
+          ls -lh build/DortmundGameMap-PhoenixWest.apk
+
+      - name: Upload cell artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: phoenix-west-cell-001
+          path: |
+            cells/phoenix_west_001.json
+            data/raw/phoenix_west_001/manifest.json
+            data/raw/phoenix_west_001/alkis_buildings.geojson
+            data/raw/phoenix_west_001/trees.json
+            data/derived/phoenix_west_001/*.glb
+            data/derived/phoenix_west_001/cell_build_meta.json
+            data/derived/phoenix_west_001/build_report.json
+          compression-level: 6
+          retention-days: 30
+
+      - name: Upload Android APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: DortmundGameMap-PhoenixWest-APK
+          path: build/DortmundGameMap-PhoenixWest.apk
+          if-no-files-found: error
+          retention-days: 30
