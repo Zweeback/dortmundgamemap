@@ -129,9 +129,6 @@ func _load_cell(meta: Dictionary) -> void:
 		_collision_cells_loading += 1
 		_attach_trimesh_collision(col_node)
 		cell_root.add_child(col_node)
-		# Exactly one readiness callback per collision cell. Each cell receives its
-		# own physics-mode SceneTreeTimer, so multiple cells never compete for the
-		# same SceneTree.physics_frame callable connection.
 		var ready_timer := get_tree().create_timer(0.0, true, true)
 		ready_timer.timeout.connect(_notify_collision_loaded.bind(cid), CONNECT_ONE_SHOT)
 		any_loaded = true
@@ -163,7 +160,10 @@ func _unload_cell(cid: String) -> void:
 	cell_unloaded.emit(cid)
 
 ## Attach StaticBody3D + trimesh CollisionShape3D to every MeshInstance3D.
-## Readiness is counted once by _load_cell, never recursively here.
+## The current generated terrain meshes have reversed winding, so their upward
+## surface is a back face. Enable two-sided concave collision here so both the
+## player body and spawn ray can interact with the terrain until the pipeline
+## winding is corrected at source.
 func _attach_trimesh_collision(node: Node) -> void:
 	if node is MeshInstance3D:
 		var mi := node as MeshInstance3D
@@ -171,7 +171,11 @@ func _attach_trimesh_collision(node: Node) -> void:
 			var body := StaticBody3D.new()
 			body.name = "_TrimeshBody"
 			var col := CollisionShape3D.new()
-			col.shape = mi.mesh.create_trimesh_shape()
+			var terrain_shape := mi.mesh.create_trimesh_shape()
+			if terrain_shape is ConcavePolygonShape3D:
+				(terrain_shape as ConcavePolygonShape3D).backface_collision = true
+				print("COLLISION_BACKFACE_ENABLED mesh=%s" % mi.name)
+			col.shape = terrain_shape
 			body.add_child(col)
 			mi.add_child(body)
 	for child in node.get_children():
