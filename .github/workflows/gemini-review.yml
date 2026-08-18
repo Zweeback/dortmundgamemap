@@ -1,0 +1,149 @@
+name: Gemini architecture review
+
+# Gate: GEMINI_REVIEWED
+# Triggered manually or by review-loop orchestrator.
+# Read-only: posts a PR comment with architecture/correctness assessment.
+# No auto-merge, no code mutation.
+#
+# Model: google/gemini-2.5-pro via GitHub Models (models.inference.ai.azure.com)
+# Requires: Models permission enabled for this repository and a valid GITHUB_TOKEN
+# with models: read scope (available by default on GitHub-hosted runners when
+# GitHub Models is enabled for the org/repo).
+#
+# Blocker: GitHub Models must be enabled for the repository (Settings > Copilot >
+# GitHub Models). If the model endpoint returns 403/404 the workflow will fail
+# with an explicit diagnostic message.
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to review'
+        required: true
+        type: string
+      state:
+        description: 'Current pipeline state (must be CI_GREEN)'
+        required: false
+        default: 'CI_GREEN'
+  workflow_call:
+    inputs:
+      pr_number:
+        required: true
+        type: string
+      state:
+        required: false
+        type: string
+        default: 'CI_GREEN'
+    outputs:
+      outcome:
+        description: 'GEMINI_REVIEWED or REWORK'
+        value: ${{ jobs.gemini-review.outputs.outcome }}
+
+permissions:
+  contents: read
+  pull-requests: write
+  models: read
+
+jobs:
+  gemini-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      outcome: ${{ steps.post-comment.outputs.outcome }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch PR diff
+        id: diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          gh pr diff "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" > /tmp/pr.diff 2>&1 || {
+            echo "::error::Could not fetch diff for PR $PR_NUMBER"
+            exit 1
+          }
+          # Truncate to 24 000 chars to stay within model context limits
+          head -c 24000 /tmp/pr.diff > /tmp/pr_truncated.diff
+          echo "diff_chars=$(wc -c < /tmp/pr_truncated.diff)" >> "$GITHUB_OUTPUT"
+
+      - name: Call GitHub Models – Gemini 2.5 Pro
+        id: gemini
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          DIFF=$(cat /tmp/pr_truncated.diff)
+          # Escape diff for JSON (replace backslash, quote, newline, tab)
+          DIFF_JSON=$(printf '%s' "$DIFF" | python3 -c "
+          import sys, json
+          print(json.dumps(sys.stdin.read()))
+          ")
+
+          PAYLOAD=$(cat <<EOF
+          {
+            "model": "google/gemini-2.5-pro",
+            "messages": [
+              {
+                "role": "system",
+                "content": "You are a senior software architect reviewing a pull request for a Godot 4 geospatial game. Review ONLY the supplied diff. Focus on: (1) architectural correctness, (2) CRS/coordinate integrity (EPSG:25832), (3) provenance and licensing metadata, (4) collision-mesh hygiene (no full-resolution trimesh from render mesh). Do NOT suggest style changes. End your review with one of: ARCHITECTURE_OK or ARCHITECTURE_CONCERNS."
+              },
+              {
+                "role": "user",
+                "content": $DIFF_JSON
+              }
+            ],
+            "max_tokens": 1024
+          }
+          EOF
+          )
+
+          HTTP_STATUS=$(curl -s -o /tmp/gemini_response.json -w "%{http_code}" \
+            -X POST "https://models.inference.ai.azure.com/chat/completions" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: ******" \
+            -d "$PAYLOAD")
+
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "::error::GitHub Models returned HTTP $HTTP_STATUS. Ensure GitHub Models is enabled for this repository (Settings > Copilot > GitHub Models). Response: $(cat /tmp/gemini_response.json)"
+            exit 1
+          fi
+
+          REVIEW=$(python3 -c "
+          import json, sys
+          d = json.load(open('/tmp/gemini_response.json'))
+          print(d['choices'][0]['message']['content'])
+          ")
+          echo "$REVIEW" > /tmp/gemini_review.txt
+
+          # Determine outcome
+          if echo "$REVIEW" | grep -q "ARCHITECTURE_CONCERNS"; then
+            echo "outcome=REWORK" >> "$GITHUB_OUTPUT"
+          else
+            echo "outcome=GEMINI_REVIEWED" >> "$GITHUB_OUTPUT"
+          fi
+          echo "review_body<<EOF" >> "$GITHUB_OUTPUT"
+          cat /tmp/gemini_review.txt >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Post review comment
+        id: post-comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          OUTCOME: ${{ steps.gemini.outputs.outcome }}
+        run: |
+          BODY="### 🔵 Gemini Architecture Review
+
+          **Model:** \`google/gemini-2.5-pro\` via GitHub Models
+          **Gate:** \`GEMINI_REVIEWED\`
+          **Outcome:** \`$OUTCOME\`
+
+          $(cat /tmp/gemini_review.txt)
+
+          ---
+          *This comment was posted automatically by the review-loop workflow. No auto-merge will occur.*"
+
+          gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$BODY"
+          echo "outcome=$OUTCOME" >> "$GITHUB_OUTPUT"
