@@ -32,6 +32,11 @@ func _ready() -> void:
 		streaming_manager.player_ref = player
 		streaming_manager.collision_ready.connect(_on_streaming_collision_ready)
 		_apply_streaming_spawn()
+		# Start the initial cell load only after the player exists and the
+		# collision-ready signal is connected. This removes the first-frame race
+		# where collision could become ready before the player handshake existed.
+		print("SPAWN_HANDSHAKE_ARMED position=%s" % player.global_position)
+		streaming_manager.update_streaming(player.global_position)
 	_build_map_camera()
 	_build_hud()
 
@@ -48,9 +53,6 @@ func _try_start_streaming_manager() -> void:
 		return
 	add_child(mgr)
 	streaming_manager = mgr
-	# Seed streaming at the anchor spawn so the right cells begin loading immediately.
-	var xz := mgr.spawn_godot_xz
-	mgr.update_streaming(Vector3(xz.x, 0.0, xz.y))
 
 
 func _apply_streaming_spawn() -> void:
@@ -66,6 +68,7 @@ func _apply_streaming_spawn() -> void:
 ## Triggers a deferred spawn Y re-resolution to fix the first-frame race.
 func _on_streaming_collision_ready() -> void:
 	if player != null:
+		print("SPAWN_COLLISION_READY received")
 		player.resolve_spawn_when_ready()
 
 
