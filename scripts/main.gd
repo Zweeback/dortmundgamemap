@@ -5,6 +5,7 @@ const CITY_RUNTIME_PATH := "user://dortmund.glb"
 const PLAYER_SCRIPT := preload("res://scripts/player.gd")
 const HUD_SCRIPT := preload("res://scripts/hud.gd")
 const WORLD_CELL_SCRIPT := preload("res://scripts/world_cell_loader.gd")
+const STREAMING_MANAGER_SCRIPT := preload("res://scripts/world_streaming_manager.gd")
 
 var player
 var hud
@@ -14,14 +15,19 @@ var city_root: Node3D
 var city_size_xz := Vector2(1336.0, 1140.0)
 var world_cell
 var using_stream_cell := false
+var streaming_manager: WorldStreamingManager = null
 
 func _ready() -> void:
 	_build_environment()
 	using_stream_cell = _build_stream_cell()
-	if not using_stream_cell:
+	_try_start_streaming_manager()
+	if not using_stream_cell and streaming_manager == null:
 		_build_ground()
 		_build_city()
 	_build_player()
+	if streaming_manager != null:
+		streaming_manager.player_ref = player
+		_apply_streaming_spawn()
 	_build_map_camera()
 	_build_hud()
 
@@ -29,6 +35,29 @@ func _process(_delta: float) -> void:
 	if map_mode and map_camera and player:
 		map_camera.global_position.x = player.global_position.x
 		map_camera.global_position.z = player.global_position.z
+
+func _try_start_streaming_manager() -> void:
+	var mgr := STREAMING_MANAGER_SCRIPT.new()
+	mgr.name = "WorldStreamingManager"
+	if not mgr.load_index():
+		mgr.free()
+		return
+	add_child(mgr)
+	streaming_manager = mgr
+	# Seed initial batch of cells at world origin so assets begin loading.
+	mgr.update_streaming(Vector3.ZERO)
+
+
+func _apply_streaming_spawn() -> void:
+	if streaming_manager == null or player == null:
+		return
+	var xz: Vector2 = streaming_manager.spawn_godot_xz()
+	if xz == Vector2.ZERO:
+		return
+	# Position player at resolved XZ; Y will be surface-resolved once
+	# collision meshes are settled in the next physics frame.
+	player.position = Vector3(xz.x, player.position.y, xz.y)
+
 
 func _build_stream_cell() -> bool:
 	var candidate = WORLD_CELL_SCRIPT.new()
@@ -159,7 +188,13 @@ func _build_placeholder_city() -> void:
 func _build_player() -> void:
 	player = PLAYER_SCRIPT.new()
 	player.name = "Player"
-	player.position = world_cell.player_spawn if using_stream_cell else Vector3(0.0, 1.25, 0.0)
+	if using_stream_cell and world_cell != null:
+		player.position = world_cell.player_spawn
+	elif streaming_manager != null:
+		var xz: Vector2 = streaming_manager.spawn_godot_xz()
+		player.position = Vector3(xz.x, 1.25, xz.y)
+	else:
+		player.position = Vector3(0.0, 1.25, 0.0)
 	add_child(player)
 
 func _build_map_camera() -> void:

@@ -18,6 +18,11 @@ var _pitch := deg_to_rad(-18.0)
 var _spawn := Vector3(0.0, 1.25, 0.0)
 var _last_touch_look_id := -1
 
+## Height above surface to place the player after a raycast spawn.
+const SPAWN_ABOVE_SURFACE := 1.25
+## Raycast length downward when resolving surface Y.
+const SPAWN_RAY_LENGTH := 512.0
+
 var spring_arm: SpringArm3D
 var camera: Camera3D
 
@@ -140,5 +145,30 @@ func jump() -> void:
 		velocity.y = jump_velocity
 
 func reset_to_spawn() -> void:
-	global_position = _spawn
+	global_position = _resolve_surface_position(_spawn)
 	velocity = Vector3.ZERO
+
+
+## Teleport to a new XZ world position, resolving Y via downward raycast.
+func teleport_to(world_xz: Vector2) -> void:
+	var candidate := Vector3(world_xz.x, _spawn.y, world_xz.y)
+	global_position = _resolve_surface_position(candidate)
+	velocity = Vector3.ZERO
+	_spawn = global_position
+
+
+## Cast a ray downward from (pos.x, high_y, pos.z) and return a position
+## SPAWN_ABOVE_SURFACE metres above the first hit.  Falls back to pos if
+## the physics world has not settled yet (e.g. assets still loading).
+func _resolve_surface_position(pos: Vector3) -> Vector3:
+	var space_state := get_world_3d().direct_space_state
+	if space_state == null:
+		return pos
+	var ray_from := Vector3(pos.x, pos.y + SPAWN_RAY_LENGTH * 0.5, pos.z)
+	var ray_to   := Vector3(pos.x, pos.y - SPAWN_RAY_LENGTH,        pos.z)
+	var query := PhysicsRayQueryParameters3D.create(ray_from, ray_to)
+	query.exclude = [self]
+	var result := space_state.intersect_ray(query)
+	if result.is_empty():
+		return pos
+	return Vector3(pos.x, result["position"].y + SPAWN_ABOVE_SURFACE, pos.z)
