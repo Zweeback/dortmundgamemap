@@ -88,13 +88,15 @@ jobs:
           EOF
           keytool -genkeypair -v -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey -keypass android -dname 'CN=Android Debug,O=Android,C=US' -keyalg RSA -keysize 2048 -validity 10000
 
-      - name: Godot import and headless smoke
+      - name: Godot import and spawn-aware headless smoke
         run: |
           set -euxo pipefail
           godot --headless --editor --path . --quit
-          timeout 20s godot --headless --path . --quit-after 8 2>&1 | tee /tmp/showcase-smoke.log || true
+          timeout 24s godot --headless --path . --quit-after 12 2>&1 | tee /tmp/showcase-smoke.log || true
           grep -q 'WorldStreamingManager: loaded 48 cells' /tmp/showcase-smoke.log
           grep -q 'CELL_LOADED' /tmp/showcase-smoke.log
+          grep -q 'COLLISION_BATCH_READY' /tmp/showcase-smoke.log
+          grep -q 'SPAWN_RESOLVED' /tmp/showcase-smoke.log
 
       - name: Export ARM64 showcase APK
         run: |
