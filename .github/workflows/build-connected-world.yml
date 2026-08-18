@@ -35,6 +35,8 @@ jobs:
           cache-dependency-path: requirements-geodata.txt
       - name: Install geodata dependencies
         run: python -m pip install -r requirements-geodata.txt
+      - name: Run automated seam and corridor tests
+        run: python -m unittest discover tests
       - name: Build 48-cell connected Dortmund world
         run: python tools/build_connected_corridor.py --out connected_world
       - name: Verify seamless index and assets
@@ -46,12 +48,13 @@ jobs:
           idx=json.loads(Path('connected_world/assets/world_cells/index.json').read_text())
           assert idx['cell_size_m']==512
           assert len(idx['cells'])==48, len(idx['cells'])
+          assert idx['world_origin']==[392192, 5704704, 100.0]
           missing=[]; total_tri=0
           for c in idx['cells']:
               for key in ('terrain_render','terrain_collision'):
                   p=Path('connected_world/assets/world_cells')/c[key]
                   if not p.exists(): missing.append(str(p)); continue
-                  sc=trimesh.load(p,force='scene')
+                  sc=trimesh.load(p,file_type='glb',force='scene')
                   total_tri += sum(len(g.faces) for g in sc.geometry.values())
           if missing: raise SystemExit('Missing assets: '+repr(missing[:10]))
           print('CONNECTED_WORLD_OK cells=',len(idx['cells']),'terrain_triangles=',total_tri)

@@ -5,6 +5,7 @@ const CITY_RUNTIME_PATH := "user://dortmund.glb"
 const PLAYER_SCRIPT := preload("res://scripts/player.gd")
 const HUD_SCRIPT := preload("res://scripts/hud.gd")
 const WORLD_CELL_SCRIPT := preload("res://scripts/world_cell_loader.gd")
+const STREAMING_MANAGER_SCRIPT := preload("res://scripts/world_streaming_manager.gd")
 
 var player
 var hud
@@ -14,14 +15,23 @@ var city_root: Node3D
 var city_size_xz := Vector2(1336.0, 1140.0)
 var world_cell
 var using_stream_cell := false
+var streaming_manager: WorldStreamingManager = null
 
 func _ready() -> void:
 	_build_environment()
-	using_stream_cell = _build_stream_cell()
-	if not using_stream_cell:
+	# Streaming manager is authoritative when the index is present;
+	# legacy single-cell loader is only used as fallback when manager is absent.
+	_try_start_streaming_manager()
+	if streaming_manager == null:
+		using_stream_cell = _build_stream_cell()
+	if streaming_manager == null and not using_stream_cell:
 		_build_ground()
 		_build_city()
 	_build_player()
+	if streaming_manager != null:
+		streaming_manager.player_ref = player
+		streaming_manager.collision_ready.connect(_on_streaming_collision_ready)
+		_apply_streaming_spawn()
 	_build_map_camera()
 	_build_hud()
 
@@ -29,6 +39,35 @@ func _process(_delta: float) -> void:
 	if map_mode and map_camera and player:
 		map_camera.global_position.x = player.global_position.x
 		map_camera.global_position.z = player.global_position.z
+
+func _try_start_streaming_manager() -> void:
+	var mgr := STREAMING_MANAGER_SCRIPT.new()
+	mgr.name = "WorldStreamingManager"
+	if not mgr.load_index():
+		mgr.free()
+		return
+	add_child(mgr)
+	streaming_manager = mgr
+	# Seed streaming at the anchor spawn so the right cells begin loading immediately.
+	var xz := mgr.spawn_godot_xz
+	mgr.update_streaming(Vector3(xz.x, 0.0, xz.y))
+
+
+func _apply_streaming_spawn() -> void:
+	if streaming_manager == null or player == null:
+		return
+	var xz: Vector2 = streaming_manager.spawn_godot_xz
+	if xz == Vector2.ZERO:
+		return
+	player.position = Vector3(xz.x, player.position.y, xz.y)
+
+
+## Called when terrain-collision cells have entered the physics world.
+## Triggers a deferred spawn Y re-resolution to fix the first-frame race.
+func _on_streaming_collision_ready() -> void:
+	if player != null:
+		player.resolve_spawn_when_ready()
+
 
 func _build_stream_cell() -> bool:
 	var candidate = WORLD_CELL_SCRIPT.new()
@@ -159,7 +198,13 @@ func _build_placeholder_city() -> void:
 func _build_player() -> void:
 	player = PLAYER_SCRIPT.new()
 	player.name = "Player"
-	player.position = world_cell.player_spawn if using_stream_cell else Vector3(0.0, 1.25, 0.0)
+	if using_stream_cell and world_cell != null:
+		player.position = world_cell.player_spawn
+	elif streaming_manager != null:
+		var xz: Vector2 = streaming_manager.spawn_godot_xz
+		player.position = Vector3(xz.x, 1.25, xz.y)
+	else:
+		player.position = Vector3(0.0, 1.25, 0.0)
 	add_child(player)
 
 func _build_map_camera() -> void:
