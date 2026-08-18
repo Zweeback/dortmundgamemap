@@ -172,9 +172,6 @@ func resolve_spawn_when_ready() -> void:
 func _schedule_spawn_resolve() -> void:
 	if not _spawn_resolve_active or not is_inside_tree():
 		return
-	# A separate physics-mode SceneTreeTimer is used for every attempt. This
-	# avoids reconnecting the same SceneTree.physics_frame callable while a
-	# previous one-shot callback is still being dispatched.
 	var retry_timer := get_tree().create_timer(0.0, true, true)
 	retry_timer.timeout.connect(_attempt_spawn_resolve, CONNECT_ONE_SHOT)
 
@@ -210,6 +207,9 @@ func _resolve_surface_position(pos: Vector3) -> Vector3:
 	var ray_to := Vector3(pos.x, pos.y - SPAWN_RAY_LENGTH, pos.z)
 	var query := PhysicsRayQueryParameters3D.create(ray_from, ray_to)
 	query.exclude = [self]
+	# The current terrain artifact has reversed triangle winding. The runtime
+	# collider is deliberately two-sided; make the spawn query intent explicit.
+	query.hit_back_faces = true
 	var result := space_state.intersect_ray(query)
 	if result.is_empty():
 		_pending_spawn_resolve = true
