@@ -129,9 +129,11 @@ func _load_cell(meta: Dictionary) -> void:
 		_collision_cells_loading += 1
 		_attach_trimesh_collision(col_node)
 		cell_root.add_child(col_node)
-		# Exactly one readiness callback per collision cell. Waiting for the next
-		# physics frame ensures the StaticBody3D nodes have entered the physics space.
-		get_tree().physics_frame.connect(_notify_collision_loaded.bind(cid), CONNECT_ONE_SHOT)
+		# Exactly one readiness callback per collision cell. Each cell receives its
+		# own physics-mode SceneTreeTimer, so multiple cells never compete for the
+		# same SceneTree.physics_frame callable connection.
+		var ready_timer := get_tree().create_timer(0.0, true, true)
+		ready_timer.timeout.connect(_notify_collision_loaded.bind(cid), CONNECT_ONE_SHOT)
 		any_loaded = true
 
 	var buildings: Array = meta.get("buildings", []) as Array
