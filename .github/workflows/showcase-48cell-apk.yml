@@ -74,21 +74,7 @@ jobs:
           cp -a /tmp/templates/templates/. "$HOME/.local/share/godot/export_templates/4.7.1.stable/"
           godot --version
 
-      - name: Configure Android export
-        run: |
-          mkdir -p "$HOME/.config/godot" "$HOME/.android"
-          JAVA_HOME_REAL="$(dirname "$(dirname "$(readlink -f "$(command -v javac)")")")"
-          ANDROID_SDK_REAL="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
-          cat > "$HOME/.config/godot/editor_settings-4.7.tres" <<EOF
-          [gd_resource type="EditorSettings" format=3]
-
-          [resource]
-          export/android/java_sdk_path = "$JAVA_HOME_REAL"
-          export/android/android_sdk_path = "$ANDROID_SDK_REAL"
-          EOF
-          keytool -genkeypair -v -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey -keypass android -dname 'CN=Android Debug,O=Android,C=US' -keyalg RSA -keysize 2048 -validity 10000
-
-      - name: Godot import and spawn-aware headless smoke
+      - name: Godot import and building-clear spawn smoke
         run: |
           set -euxo pipefail
           godot --headless --editor --path . --quit
@@ -96,7 +82,24 @@ jobs:
           grep -q 'WorldStreamingManager: loaded 48 cells' /tmp/showcase-smoke.log
           grep -q 'CELL_LOADED' /tmp/showcase-smoke.log
           grep -q 'COLLISION_BATCH_READY' /tmp/showcase-smoke.log
-          grep -q 'SPAWN_RESOLVED' /tmp/showcase-smoke.log
+          grep -q 'BUILDING_BOUNDS_CACHED count=' /tmp/showcase-smoke.log
+          grep -q 'SPAWN_REGRESSION_BLOCKED_OK' /tmp/showcase-smoke.log
+          grep -q 'SPAWN_SAFE_RESOLVED' /tmp/showcase-smoke.log
+          if grep -q 'SPAWN_REGRESSION_GUARD_FAILED' /tmp/showcase-smoke.log; then
+            echo 'Historic in-building spawn regression guard failed' >&2
+            exit 1
+          fi
+          python - <<'PY'
+          import re
+          text=open('/tmp/showcase-smoke.log', encoding='utf-8', errors='replace').read()
+          m=re.search(r'BUILDING_BOUNDS_CACHED count=(\d+)', text)
+          assert m and int(m.group(1)) > 0, 'no building bounds were collected'
+          m=re.search(r'SPAWN_SAFE_RESOLVED position=\(([-0-9.]+), ([-0-9.]+), ([-0-9.]+)\)', text)
+          assert m, 'missing resolved spawn coordinates'
+          x,y,z=map(float,m.groups())
+          assert (abs(x-2652.0) > 0.5 or abs(z+376.0) > 0.5), 'safe resolver reused the historic blocked X/Z'
+          print(f'SPAWN_GATE_OK x={x:.3f} y={y:.3f} z={z:.3f} bounds={int(re.search(r"BUILDING_BOUNDS_CACHED count=(\\d+)", text).group(1))}')
+          PY
 
       - name: Export ARM64 showcase APK
         run: |
