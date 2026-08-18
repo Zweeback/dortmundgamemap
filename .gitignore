@@ -10,4 +10,5 @@ assets/*.bin
 data/raw/
 data/cache/
 data/derived/
+connected_world/
 .DS_Store
