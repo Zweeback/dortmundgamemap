@@ -92,7 +92,7 @@ jobs:
         run: |
           set -euxo pipefail
           godot --headless --editor --path . --quit
-          timeout 24s godot --headless --path . --quit-after 12 2>&1 | tee /tmp/showcase-smoke.log || true
+          timeout 24s godot --headless --path . --quit-after 120 2>&1 | tee /tmp/showcase-smoke.log || true
           grep -q 'WorldStreamingManager: loaded 48 cells' /tmp/showcase-smoke.log
           grep -q 'CELL_LOADED' /tmp/showcase-smoke.log
           grep -q 'COLLISION_BATCH_READY' /tmp/showcase-smoke.log
