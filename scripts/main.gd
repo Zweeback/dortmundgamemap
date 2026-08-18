@@ -19,14 +19,18 @@ var streaming_manager: WorldStreamingManager = null
 
 func _ready() -> void:
 	_build_environment()
-	using_stream_cell = _build_stream_cell()
+	# Streaming manager is authoritative when the index is present;
+	# legacy single-cell loader is only used as fallback when manager is absent.
 	_try_start_streaming_manager()
-	if not using_stream_cell and streaming_manager == null:
+	if streaming_manager == null:
+		using_stream_cell = _build_stream_cell()
+	if streaming_manager == null and not using_stream_cell:
 		_build_ground()
 		_build_city()
 	_build_player()
 	if streaming_manager != null:
 		streaming_manager.player_ref = player
+		streaming_manager.collision_ready.connect(_on_streaming_collision_ready)
 		_apply_streaming_spawn()
 	_build_map_camera()
 	_build_hud()
@@ -44,19 +48,25 @@ func _try_start_streaming_manager() -> void:
 		return
 	add_child(mgr)
 	streaming_manager = mgr
-	# Seed initial batch of cells at world origin so assets begin loading.
-	mgr.update_streaming(Vector3.ZERO)
+	# Seed streaming at the anchor spawn so the right cells begin loading immediately.
+	var xz := mgr.spawn_godot_xz
+	mgr.update_streaming(Vector3(xz.x, 0.0, xz.y))
 
 
 func _apply_streaming_spawn() -> void:
 	if streaming_manager == null or player == null:
 		return
-	var xz: Vector2 = streaming_manager.spawn_godot_xz()
+	var xz: Vector2 = streaming_manager.spawn_godot_xz
 	if xz == Vector2.ZERO:
 		return
-	# Position player at resolved XZ; Y will be surface-resolved once
-	# collision meshes are settled in the next physics frame.
 	player.position = Vector3(xz.x, player.position.y, xz.y)
+
+
+## Called when terrain-collision cells have entered the physics world.
+## Triggers a deferred spawn Y re-resolution to fix the first-frame race.
+func _on_streaming_collision_ready() -> void:
+	if player != null:
+		player.resolve_spawn_when_ready()
 
 
 func _build_stream_cell() -> bool:
@@ -191,7 +201,7 @@ func _build_player() -> void:
 	if using_stream_cell and world_cell != null:
 		player.position = world_cell.player_spawn
 	elif streaming_manager != null:
-		var xz: Vector2 = streaming_manager.spawn_godot_xz()
+		var xz: Vector2 = streaming_manager.spawn_godot_xz
 		player.position = Vector3(xz.x, 1.25, xz.y)
 	else:
 		player.position = Vector3(0.0, 1.25, 0.0)
