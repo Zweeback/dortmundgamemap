@@ -9,6 +9,14 @@ on:
       - 'tools/citygml_to_glb.py'
       - 'requirements-geodata.txt'
       - '.github/workflows/build-connected-world.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'tools/build_connected_corridor.py'
+      - 'tools/build_terrain.py'
+      - 'tools/citygml_to_glb.py'
+      - 'requirements-geodata.txt'
+      - '.github/workflows/build-connected-world.yml'
   workflow_dispatch:
 
 permissions:
