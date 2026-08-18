@@ -1,0 +1,73 @@
+    assert "stored_contract_hash_mismatch" in final["verification_errors"]
+
+
+def test_verification_ttl_cannot_become_new_waiting_state(tmp_path: Path) -> None:
+    _, verifier, _, _, _ = begin_valid_claim(tmp_path, "ttl", ttl=5)
+    path = verifier.state_path("ttl")
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record["verification_deadline_at"] = iso(datetime.now(timezone.utc) - timedelta(seconds=1))
+    path.write_text(json.dumps(record, indent=2), encoding="utf-8")
+    final, _ = verifier.verify_once("ttl")
+    assert final["current_state"] == "verification_rejected"
+    assert final["verification_errors"] == ["verification_ttl_exceeded"]
+
+
+def test_artifact_path_outside_contract_root_is_rejected(tmp_path: Path) -> None:
+    lease_manager, verifier, record = setup_running_job(tmp_path, "escape")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("secret", encoding="utf-8")
+    verifier.begin_completion_claim(
+        "escape",
+        owner=record["owner"],
+        lease_id=record["lease_id"],
+        contract_hash=record["expected_artifact_contract_hash"],
+        artifacts=[{"path": "outside.txt", "size_bytes": outside.stat().st_size, "sha256": "0" * 64}],
+        lease_manager=lease_manager,
+    )
+    final, _ = verifier.verify_once("escape")
+    assert final["current_state"] == "verification_rejected"
+    assert any(error.startswith("artifact_path_rejected:") for error in final["verification_errors"])
+
+
+def test_cold_start_resumes_persisted_verifying_job(tmp_path: Path) -> None:
+    _, verifier, _, _, _ = begin_valid_claim(tmp_path, "recover")
+    restarted = ArtifactVerifier(
+        tmp_path,
+        tmp_path / "artifacts" / "jobs",
+        config=VerificationConfig(verification_ttl_seconds=120),
+    )
+    events = restarted.process_pending_once()
+    final = restarted.load("recover")
+    assert final["current_state"] == "succeeded"
+    assert any(event["type"] == "verification.succeeded" for event in events)
+
+
+def test_verification_rejection_can_be_reclaimed_for_retry(tmp_path: Path) -> None:
+    lease_manager, verifier, _, ref, _ = begin_valid_claim(tmp_path, "retry-rejected")
+    (tmp_path / ref).write_text("tampered", encoding="utf-8")
+    final, _ = verifier.verify_once("retry-rejected")
+    assert final["current_state"] == "verification_rejected"
+
+    reclaimed, event = lease_manager.claim(
+        "retry-rejected",
+        owner="worker:copilot:retry",
+        worker_type="copilot",
+    )
+    assert event["type"] == "lease.claimed"
+    assert reclaimed["current_state"] == "retrying"
+    lease_manager.validate(
+        "retry-rejected",
+        owner=reclaimed["owner"],
+        lease_id=reclaimed["lease_id"],
+    )
+
+
+def test_main_wiring_has_verifier_gate_and_no_worker_success_transition() -> None:
+    source = (Path(__file__).parents[1] / "orchestrator" / "main.py").read_text(encoding="utf-8")
+    assert '@app.post("/api/bridge/jobs/{job_id}/completion-claim")' in source
+    assert "artifact_verifier.begin_completion_claim" in source
+    assert "artifact_verifier.verify_once" in source
+    assert "artifact_verifier.process_pending_once" in source
+    assert 'asyncio.create_task(\n            _verification_sweeper_loop(),' in source
+    assert '"expected_artifact_contract_hash"' in source
+    assert 'sm.transition_to(\n            "succeeded"' not in source
