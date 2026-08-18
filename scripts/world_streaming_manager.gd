@@ -65,9 +65,14 @@ func load_index() -> bool:
 	_world_origin = Vector3(float(wo[0]), float(wo[2]), float(wo[1]))
 	_cells_meta = manifest["cells"] as Array
 
-	var anchor_e := 394844.0
-	var anchor_n := 5705080.0
+	# Verified against the published 48-cell artifact: the previous anchor
+	# E394844/N5705080 sat inside a LoD2 building shell (roof ~68.9 m above
+	# local origin). This nearby point has terrain support and a sampled
+	# 16x16 m building-free clearance envelope.
+	var anchor_e := 394820.0
+	var anchor_n := 5705088.0
 	spawn_godot_xz = utm_to_godot_xz(anchor_e, anchor_n)
+	print("SPAWN_ANCHOR_UTM e=%.1f n=%.1f godot=%s" % [anchor_e, anchor_n, spawn_godot_xz])
 
 	print("WorldStreamingManager: loaded %d cells, world_origin=%s" % [
 		_cells_meta.size(), wo])
