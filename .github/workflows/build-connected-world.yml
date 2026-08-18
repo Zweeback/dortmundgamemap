@@ -54,7 +54,7 @@ jobs:
               for key in ('terrain_render','terrain_collision'):
                   p=Path('connected_world/assets/world_cells')/c[key]
                   if not p.exists(): missing.append(str(p)); continue
-                  sc=trimesh.load(p,file_type='glb',force='scene')
+                  sc=trimesh.load(p.open('rb'),file_type='glb',force='scene')
                   total_tri += sum(len(g.faces) for g in sc.geometry.values())
           if missing: raise SystemExit('Missing assets: '+repr(missing[:10]))
           print('CONNECTED_WORLD_OK cells=',len(idx['cells']),'terrain_triangles=',total_tri)
