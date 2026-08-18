@@ -22,13 +22,12 @@ var _last_touch_look_id := -1
 const SPAWN_ABOVE_SURFACE := 1.25
 ## Raycast length downward when resolving surface Y.
 const SPAWN_RAY_LENGTH := 512.0
-## Maximum deferred re-resolution attempts before accepting the fallback position.
-const MAX_RESOLVE_RETRIES := 8
+## Retry across real physics frames so Android has time to register streamed collision.
+const MAX_RESOLVE_RETRIES := 24
 
-## Set to true when an initial spawn raycast misses (collision not yet ready).
-## main.gd clears this via resolve_spawn_when_ready() after collision_ready fires.
 var _pending_spawn_resolve := false
 var _resolve_retries := 0
+var _spawn_resolve_active := false
 
 var spring_arm: SpringArm3D
 var camera: Camera3D
@@ -107,7 +106,7 @@ func _physics_process(delta: float) -> void:
 
 	if not is_on_floor():
 		velocity.y -= gravity_strength * delta
-	
+
 	move_and_slide()
 	coordinates_changed.emit(global_position)
 
@@ -166,34 +165,47 @@ func teleport_to(world_xz: Vector2) -> void:
 	_spawn = global_position
 
 
-## Called by main.gd when WorldStreamingManager.collision_ready fires.
-## Attempts to re-resolve spawn Y now that collision meshes are in the physics world.
+## Called once WorldStreamingManager confirms the initial collision batch has
+## crossed a physics-frame boundary. Always starts a fresh resolution attempt;
+## it does not depend on a previous raycast having missed.
 func resolve_spawn_when_ready() -> void:
-	if not _pending_spawn_resolve:
+	_resolve_retries = 0
+	_pending_spawn_resolve = true
+	_spawn_resolve_active = true
+	_attempt_spawn_resolve()
+
+
+func _attempt_spawn_resolve() -> void:
+	if not _spawn_resolve_active or not is_inside_tree():
 		return
 	_resolve_retries += 1
 	var resolved := _resolve_surface_position(_spawn)
-	if resolved != _spawn or _resolve_retries >= MAX_RESOLVE_RETRIES:
+	if not _pending_spawn_resolve:
 		global_position = resolved
 		velocity = Vector3.ZERO
 		_spawn = resolved
-		_pending_spawn_resolve = false
-		if _resolve_retries >= MAX_RESOLVE_RETRIES:
-			push_warning("DortmundPlayer: spawn resolve hit retry limit; using fallback position %s" % resolved)
-		else:
-			print("DortmundPlayer: deferred spawn resolved to %s after %d attempt(s)" % [resolved, _resolve_retries])
-	# else: still a miss — will retry next collision_ready signal
+		_spawn_resolve_active = false
+		print("SPAWN_RESOLVED position=%s attempts=%d" % [resolved, _resolve_retries])
+		return
+
+	if _resolve_retries >= MAX_RESOLVE_RETRIES:
+		_spawn_resolve_active = false
+		push_error("SPAWN_RESOLVE_FAILED after %d physics-frame attempts at xz=(%.3f, %.3f)" % [
+			_resolve_retries, _spawn.x, _spawn.z])
+		return
+
+	# Retry only after the next physics frame, not via idle/deferred callbacks.
+	get_tree().physics_frame.connect(_attempt_spawn_resolve, CONNECT_ONE_SHOT)
 
 
 ## Cast a ray downward from pos and return SPAWN_ABOVE_SURFACE m above the first hit.
-## On a ray miss, marks _pending_spawn_resolve=true so the caller can retry later.
 func _resolve_surface_position(pos: Vector3) -> Vector3:
 	var space_state := get_world_3d().direct_space_state
 	if space_state == null:
 		_pending_spawn_resolve = true
 		return pos
 	var ray_from := Vector3(pos.x, pos.y + SPAWN_RAY_LENGTH * 0.5, pos.z)
-	var ray_to   := Vector3(pos.x, pos.y - SPAWN_RAY_LENGTH,        pos.z)
+	var ray_to := Vector3(pos.x, pos.y - SPAWN_RAY_LENGTH, pos.z)
 	var query := PhysicsRayQueryParameters3D.create(ray_from, ray_to)
 	query.exclude = [self]
 	var result := space_state.intersect_ray(query)
