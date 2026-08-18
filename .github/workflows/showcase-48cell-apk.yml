@@ -3,6 +3,8 @@ name: Showcase 48-cell Android APK
 on:
   push:
     branches: [showcase/48cell-demo-apk]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -66,7 +68,7 @@ jobs:
           unzip -q /tmp/godot.zip -d /tmp/godot
           chmod +x /tmp/godot/Godot_v4.7.1-stable_linux.x86_64
           sudo mv /tmp/godot/Godot_v4.7.1-stable_linux.x86_64 /usr/local/bin/godot
-          curl -L --fail --retry 4 -o /tmp/templates.tpz 'https://downloads.godotengine.org/?flavor=stable&platform=templates&slug=export_templates.tpz&version=4.7.1'
+          curl -L --fail --retry 4 -o /tmp/templates.tpz 'https://downloads.godotengine.org/?flavor=templates&platform=templates&slug=export_templates.tpz&version=4.7.1'
           mkdir -p "$HOME/.local/share/godot/export_templates/4.7.1.stable"
           unzip -q /tmp/templates.tpz -d /tmp/templates
           cp -a /tmp/templates/templates/. "$HOME/.local/share/godot/export_templates/4.7.1.stable/"
