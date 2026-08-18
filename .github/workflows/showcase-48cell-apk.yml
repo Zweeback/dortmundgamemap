@@ -1,0 +1,113 @@
+name: Showcase 48-cell Android APK
+
+on:
+  push:
+    branches: [showcase/48cell-demo-apk]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build-showcase:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download verified 48-cell world artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dortmund-connected-world-48cells
+          path: assets/world_cells
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: Zweeback/dortmundgamemap
+          run-id: 32152051688
+
+      - name: Verify staged world contract
+        run: |
+          set -euxo pipefail
+          test -s assets/world_cells/index.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('assets/world_cells/index.json')
+          idx=json.loads(p.read_text())
+          assert idx['crs']=='EPSG:25832'
+          assert idx['world_origin']==[392192.0,5704704.0,100.0]
+          assert len(idx['cells'])==48
+          missing=[]
+          for c in idx['cells']:
+              for k in ('terrain_render','terrain_collision'):
+                  q=p.parent/c[k]
+                  if not q.is_file(): missing.append(str(q))
+          assert not missing, missing[:20]
+          print('SHOWCASE_WORLD_OK cells=48')
+          PY
+          du -sh assets/world_cells
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android build tools
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platform-tools' 'build-tools;35.0.1' 'platforms;android-35'
+
+      - name: Install Godot 4.7.1 + export templates
+        run: |
+          set -euxo pipefail
+          curl -L --fail --retry 4 -o /tmp/godot.zip 'https://downloads.godotengine.org/?flavor=stable&platform=linux.64&slug=linux.x86_64.zip&version=4.7.1'
+          unzip -q /tmp/godot.zip -d /tmp/godot
+          chmod +x /tmp/godot/Godot_v4.7.1-stable_linux.x86_64
+          sudo mv /tmp/godot/Godot_v4.7.1-stable_linux.x86_64 /usr/local/bin/godot
+          curl -L --fail --retry 4 -o /tmp/templates.tpz 'https://downloads.godotengine.org/?flavor=stable&platform=templates&slug=export_templates.tpz&version=4.7.1'
+          mkdir -p "$HOME/.local/share/godot/export_templates/4.7.1.stable"
+          unzip -q /tmp/templates.tpz -d /tmp/templates
+          cp -a /tmp/templates/templates/. "$HOME/.local/share/godot/export_templates/4.7.1.stable/"
+          godot --version
+
+      - name: Configure Android export
+        run: |
+          mkdir -p "$HOME/.config/godot" "$HOME/.android"
+          JAVA_HOME_REAL="$(dirname "$(dirname "$(readlink -f "$(command -v javac)")")")"
+          ANDROID_SDK_REAL="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          cat > "$HOME/.config/godot/editor_settings-4.7.tres" <<EOF
+          [gd_resource type="EditorSettings" format=3]
+
+          [resource]
+          export/android/java_sdk_path = "$JAVA_HOME_REAL"
+          export/android/android_sdk_path = "$ANDROID_SDK_REAL"
+          EOF
+          keytool -genkeypair -v -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey -keypass android -dname 'CN=Android Debug,O=Android,C=US' -keyalg RSA -keysize 2048 -validity 10000
+
+      - name: Godot import and headless smoke
+        run: |
+          set -euxo pipefail
+          godot --headless --editor --path . --quit
+          timeout 20s godot --headless --path . --quit-after 8 2>&1 | tee /tmp/showcase-smoke.log || true
+          grep -q 'WorldStreamingManager: loaded 48 cells' /tmp/showcase-smoke.log
+          grep -q 'CELL_LOADED' /tmp/showcase-smoke.log
+
+      - name: Export ARM64 showcase APK
+        run: |
+          set -euxo pipefail
+          mkdir -p build
+          godot --headless --path . --export-debug 'Android' "$GITHUB_WORKSPACE/build/DortmundGameMap-48Cell-Showcase.apk"
+          test -s build/DortmundGameMap-48Cell-Showcase.apk
+          unzip -l build/DortmundGameMap-48Cell-Showcase.apk | grep 'assets/world_cells/index.json'
+          unzip -l build/DortmundGameMap-48Cell-Showcase.apk | grep 'assets/world_cells/e394752_n5704704/terrain_render.glbraw'
+          ls -lh build/DortmundGameMap-48Cell-Showcase.apk
+
+      - name: Upload showcase APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: DortmundGameMap-48Cell-Showcase-APK
+          path: build/DortmundGameMap-48Cell-Showcase.apk
+          if-no-files-found: error
+          retention-days: 30
