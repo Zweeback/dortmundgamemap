@@ -18,11 +18,8 @@ var _pitch := deg_to_rad(-18.0)
 var _spawn := Vector3(0.0, 1.25, 0.0)
 var _last_touch_look_id := -1
 
-## Height above surface to place the player after a raycast spawn.
 const SPAWN_ABOVE_SURFACE := 1.25
-## Raycast length downward when resolving surface Y.
 const SPAWN_RAY_LENGTH := 512.0
-## Retry across real physics frames so Android has time to register streamed collision.
 const MAX_RESOLVE_RETRIES := 24
 
 var _pending_spawn_resolve := false
@@ -155,8 +152,6 @@ func reset_to_spawn() -> void:
 	global_position = resolved
 	velocity = Vector3.ZERO
 
-
-## Teleport to a new XZ world position, resolving Y via downward raycast.
 func teleport_to(world_xz: Vector2) -> void:
 	var candidate := Vector3(world_xz.x, _spawn.y, world_xz.y)
 	var resolved := _resolve_surface_position(candidate)
@@ -164,16 +159,24 @@ func teleport_to(world_xz: Vector2) -> void:
 	velocity = Vector3.ZERO
 	_spawn = global_position
 
-
-## Called once WorldStreamingManager confirms the initial collision batch has
-## crossed a physics-frame boundary. Always starts a fresh resolution attempt;
-## it does not depend on a previous raycast having missed.
+## Called once the streaming manager confirms that the initial collision batch
+## has crossed a physics-frame boundary. The first ray is intentionally delayed
+## to a fresh physics tick so it never runs inside the manager's ready signal.
 func resolve_spawn_when_ready() -> void:
 	_resolve_retries = 0
 	_pending_spawn_resolve = true
 	_spawn_resolve_active = true
-	_attempt_spawn_resolve()
+	print("SPAWN_RESOLVE_ARMED xz=(%.3f, %.3f)" % [_spawn.x, _spawn.z])
+	_schedule_spawn_resolve()
 
+func _schedule_spawn_resolve() -> void:
+	if not _spawn_resolve_active or not is_inside_tree():
+		return
+	# A separate physics-mode SceneTreeTimer is used for every attempt. This
+	# avoids reconnecting the same SceneTree.physics_frame callable while a
+	# previous one-shot callback is still being dispatched.
+	var retry_timer := get_tree().create_timer(0.0, true, true)
+	retry_timer.timeout.connect(_attempt_spawn_resolve, CONNECT_ONE_SHOT)
 
 func _attempt_spawn_resolve() -> void:
 	if not _spawn_resolve_active or not is_inside_tree():
@@ -188,17 +191,16 @@ func _attempt_spawn_resolve() -> void:
 		print("SPAWN_RESOLVED position=%s attempts=%d" % [resolved, _resolve_retries])
 		return
 
+	print("SPAWN_RAY_MISS attempt=%d xz=(%.3f, %.3f)" % [
+		_resolve_retries, _spawn.x, _spawn.z])
 	if _resolve_retries >= MAX_RESOLVE_RETRIES:
 		_spawn_resolve_active = false
 		push_error("SPAWN_RESOLVE_FAILED after %d physics-frame attempts at xz=(%.3f, %.3f)" % [
 			_resolve_retries, _spawn.x, _spawn.z])
 		return
 
-	# Retry only after the next physics frame, not via idle/deferred callbacks.
-	get_tree().physics_frame.connect(_attempt_spawn_resolve, CONNECT_ONE_SHOT)
+	_schedule_spawn_resolve()
 
-
-## Cast a ray downward from pos and return SPAWN_ABOVE_SURFACE m above the first hit.
 func _resolve_surface_position(pos: Vector3) -> Vector3:
 	var space_state := get_world_3d().direct_space_state
 	if space_state == null:
@@ -213,4 +215,5 @@ func _resolve_surface_position(pos: Vector3) -> Vector3:
 		_pending_spawn_resolve = true
 		return pos
 	_pending_spawn_resolve = false
+	print("SPAWN_RAY_HIT y=%.3f collider=%s" % [float(result["position"].y), result["collider"]])
 	return Vector3(pos.x, result["position"].y + SPAWN_ABOVE_SURFACE, pos.z)
