@@ -21,6 +21,7 @@ CANONICAL_WORLD_ORIGIN = [MIN_E, MIN_N, VERTICAL_ORIGIN]
 LOD2_CATALOG = "https://open-data.dortmund.de/api/explore/v2.1/catalog/datasets/3d-stadtmodell-gml-format/records?limit=100"
 DGM_WCS = "https://www.wcs.nrw.de/geobasis/wcs_nw_dgm"
 UA = "DortmundGameMap/connected-world"
+NO_LOD2_SURFACES = "No LoD2 surfaces intersect the cell bbox"
 
 
 def req(url: str, timeout: int = 180) -> bytes:
@@ -66,6 +67,11 @@ def dgm_url(bbox: list[float]) -> str:
 def run(cmd: list[str]) -> None:
     print("+", " ".join(cmd), flush=True)
     subprocess.run(cmd, check=True)
+
+
+def is_empty_lod2_result(output: str) -> bool:
+    """Return True for the known, valid case where a source tile has no surfaces in this cell."""
+    return NO_LOD2_SURFACES in output
 
 
 def main() -> None:
@@ -157,6 +163,11 @@ def main() -> None:
                 proc = subprocess.run([py, "tools/citygml_to_glb.py", str(src), "--cell", str(spec_path), "--out", str(dst_glb), "--vertical-origin", str(VERTICAL_ORIGIN)], text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
                 print(proc.stdout)
                 if proc.returncode != 0:
+                    if is_empty_lod2_result(proc.stdout):
+                        print(f"INFO no LoD2 surfaces for tile {key} in cell {cid}; continuing with no building mesh", flush=True)
+                        if dst_glb.exists():
+                            dst_glb.unlink()
+                        continue
                     raise RuntimeError(f"citygml_to_glb failed for tile {key} in cell {cid}:\n{proc.stdout}")
                 if dst_glb.exists():
                     dst_glb.rename(dst_raw)
