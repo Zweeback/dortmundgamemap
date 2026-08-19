@@ -10,7 +10,7 @@ const STREAMING_MANAGER_SCRIPT := preload("res://scripts/world_streaming_manager
 var player
 var hud
 var map_camera: Camera3D
-var map_mode := true
+var map_mode := false
 var city_root: Node3D
 var city_size_xz := Vector2(1336.0, 1140.0)
 var world_cell
@@ -19,8 +19,6 @@ var streaming_manager: WorldStreamingManager = null
 
 func _ready() -> void:
 	_build_environment()
-	# Streaming manager is authoritative when the index is present;
-	# legacy single-cell loader is only used as fallback when manager is absent.
 	_try_start_streaming_manager()
 	if streaming_manager == null:
 		using_stream_cell = _build_stream_cell()
@@ -32,6 +30,8 @@ func _ready() -> void:
 		streaming_manager.player_ref = player
 		streaming_manager.collision_ready.connect(_on_streaming_collision_ready)
 		_apply_streaming_spawn()
+		print("SPAWN_HANDSHAKE_ARMED position=%s" % player.global_position)
+		streaming_manager.update_streaming(player.global_position)
 	_build_map_camera()
 	_build_hud()
 
@@ -48,10 +48,6 @@ func _try_start_streaming_manager() -> void:
 		return
 	add_child(mgr)
 	streaming_manager = mgr
-	# Seed streaming at the anchor spawn so the right cells begin loading immediately.
-	var xz := mgr.spawn_godot_xz
-	mgr.update_streaming(Vector3(xz.x, 0.0, xz.y))
-
 
 func _apply_streaming_spawn() -> void:
 	if streaming_manager == null or player == null:
@@ -61,13 +57,10 @@ func _apply_streaming_spawn() -> void:
 		return
 	player.position = Vector3(xz.x, player.position.y, xz.y)
 
-
-## Called when terrain-collision cells have entered the physics world.
-## Triggers a deferred spawn Y re-resolution to fix the first-frame race.
 func _on_streaming_collision_ready() -> void:
 	if player != null:
+		print("SPAWN_COLLISION_READY received")
 		player.resolve_spawn_when_ready()
-
 
 func _build_stream_cell() -> bool:
 	var candidate = WORLD_CELL_SCRIPT.new()
@@ -220,11 +213,12 @@ func _build_map_camera() -> void:
 	var aspect: float = viewport_size.x / maxf(viewport_size.y, 1.0)
 	var required_height: float = maxf(city_size_xz.y, city_size_xz.x / maxf(aspect, 0.1))
 	map_camera.size = required_height * 1.08
-	map_camera.current = true
+	map_camera.current = map_mode
 	if player:
-		player.controls_enabled = false
+		player.controls_enabled = not map_mode
 		if player.camera:
-			player.camera.current = false
+			player.camera.current = not map_mode
+	print("START_VIEW mode=%s" % ("map" if map_mode else "third_person"))
 
 func _build_hud() -> void:
 	hud = HUD_SCRIPT.new()
@@ -236,7 +230,7 @@ func _build_hud() -> void:
 	hud.map_pressed.connect(toggle_map)
 	hud.reset_pressed.connect(player.reset_to_spawn)
 	player.coordinates_changed.connect(hud.update_position)
-	hud.set_map_mode(true)
+	hud.set_map_mode(map_mode)
 
 func toggle_map() -> void:
 	map_mode = not map_mode
