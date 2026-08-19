@@ -1,0 +1,839 @@
+{
+  "_comment": "Stub manifest matching build_connected_corridor.py output contract. Replace with pipeline-generated file.",
+  "crs": "EPSG:25832",
+  "cell_size_m": 512,
+  "world_bbox": [
+    392192.0,
+    5704704.0,
+    395264.0,
+    5708800.0
+  ],
+  "world_origin": [
+    392192.0,
+    5704704.0,
+    100.0
+  ],
+  "provenance": {
+    "lod2": "Stadt Dortmund 3D-Stadtmodell (DL-DE-Zero-2.0)",
+    "dgm": "Geobasis NRW DGM1 (DL-DE-Zero-2.0)",
+    "crs": "EPSG:25832 (ETRS89 / UTM zone 32N)"
+  },
+  "cells": [
+    {
+      "id": "e392192_n5704704",
+      "bbox": [
+        392192.0,
+        5704704.0,
+        392704.0,
+        5705216.0
+      ],
+      "offset": [
+        0.0,
+        0.0,
+        -0.0
+      ],
+      "terrain_render": "e392192_n5704704/terrain_render.glbraw",
+      "terrain_collision": "e392192_n5704704/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e392704_n5704704",
+      "bbox": [
+        392704.0,
+        5704704.0,
+        393216.0,
+        5705216.0
+      ],
+      "offset": [
+        512.0,
+        0.0,
+        -0.0
+      ],
+      "terrain_render": "e392704_n5704704/terrain_render.glbraw",
+      "terrain_collision": "e392704_n5704704/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e393216_n5704704",
+      "bbox": [
+        393216.0,
+        5704704.0,
+        393728.0,
+        5705216.0
+      ],
+      "offset": [
+        1024.0,
+        0.0,
+        -0.0
+      ],
+      "terrain_render": "e393216_n5704704/terrain_render.glbraw",
+      "terrain_collision": "e393216_n5704704/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e393728_n5704704",
+      "bbox": [
+        393728.0,
+        5704704.0,
+        394240.0,
+        5705216.0
+      ],
+      "offset": [
+        1536.0,
+        0.0,
+        -0.0
+      ],
+      "terrain_render": "e393728_n5704704/terrain_render.glbraw",
+      "terrain_collision": "e393728_n5704704/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e394240_n5704704",
+      "bbox": [
+        394240.0,
+        5704704.0,
+        394752.0,
+        5705216.0
+      ],
+      "offset": [
+        2048.0,
+        0.0,
+        -0.0
+      ],
+      "terrain_render": "e394240_n5704704/terrain_render.glbraw",
+      "terrain_collision": "e394240_n5704704/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e394752_n5704704",
+      "bbox": [
+        394752.0,
+        5704704.0,
+        395264.0,
+        5705216.0
+      ],
+      "offset": [
+        2560.0,
+        0.0,
+        -0.0
+      ],
+      "terrain_render": "e394752_n5704704/terrain_render.glbraw",
+      "terrain_collision": "e394752_n5704704/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e392192_n5705216",
+      "bbox": [
+        392192.0,
+        5705216.0,
+        392704.0,
+        5705728.0
+      ],
+      "offset": [
+        0.0,
+        0.0,
+        -512.0
+      ],
+      "terrain_render": "e392192_n5705216/terrain_render.glbraw",
+      "terrain_collision": "e392192_n5705216/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e392704_n5705216",
+      "bbox": [
+        392704.0,
+        5705216.0,
+        393216.0,
+        5705728.0
+      ],
+      "offset": [
+        512.0,
+        0.0,
+        -512.0
+      ],
+      "terrain_render": "e392704_n5705216/terrain_render.glbraw",
+      "terrain_collision": "e392704_n5705216/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e393216_n5705216",
+      "bbox": [
+        393216.0,
+        5705216.0,
+        393728.0,
+        5705728.0
+      ],
+      "offset": [
+        1024.0,
+        0.0,
+        -512.0
+      ],
+      "terrain_render": "e393216_n5705216/terrain_render.glbraw",
+      "terrain_collision": "e393216_n5705216/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e393728_n5705216",
+      "bbox": [
+        393728.0,
+        5705216.0,
+        394240.0,
+        5705728.0
+      ],
+      "offset": [
+        1536.0,
+        0.0,
+        -512.0
+      ],
+      "terrain_render": "e393728_n5705216/terrain_render.glbraw",
+      "terrain_collision": "e393728_n5705216/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e394240_n5705216",
+      "bbox": [
+        394240.0,
+        5705216.0,
+        394752.0,
+        5705728.0
+      ],
+      "offset": [
+        2048.0,
+        0.0,
+        -512.0
+      ],
+      "terrain_render": "e394240_n5705216/terrain_render.glbraw",
+      "terrain_collision": "e394240_n5705216/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e394752_n5705216",
+      "bbox": [
+        394752.0,
+        5705216.0,
+        395264.0,
+        5705728.0
+      ],
+      "offset": [
+        2560.0,
+        0.0,
+        -512.0
+      ],
+      "terrain_render": "e394752_n5705216/terrain_render.glbraw",
+      "terrain_collision": "e394752_n5705216/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e392192_n5705728",
+      "bbox": [
+        392192.0,
+        5705728.0,
+        392704.0,
+        5706240.0
+      ],
+      "offset": [
+        0.0,
+        0.0,
+        -1024.0
+      ],
+      "terrain_render": "e392192_n5705728/terrain_render.glbraw",
+      "terrain_collision": "e392192_n5705728/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e392704_n5705728",
+      "bbox": [
+        392704.0,
+        5705728.0,
+        393216.0,
+        5706240.0
+      ],
+      "offset": [
+        512.0,
+        0.0,
+        -1024.0
+      ],
+      "terrain_render": "e392704_n5705728/terrain_render.glbraw",
+      "terrain_collision": "e392704_n5705728/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e393216_n5705728",
+      "bbox": [
+        393216.0,
+        5705728.0,
+        393728.0,
+        5706240.0
+      ],
+      "offset": [
+        1024.0,
+        0.0,
+        -1024.0
+      ],
+      "terrain_render": "e393216_n5705728/terrain_render.glbraw",
+      "terrain_collision": "e393216_n5705728/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e393728_n5705728",
+      "bbox": [
+        393728.0,
+        5705728.0,
+        394240.0,
+        5706240.0
+      ],
+      "offset": [
+        1536.0,
+        0.0,
+        -1024.0
+      ],
+      "terrain_render": "e393728_n5705728/terrain_render.glbraw",
+      "terrain_collision": "e393728_n5705728/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e394240_n5705728",
+      "bbox": [
+        394240.0,
+        5705728.0,
+        394752.0,
+        5706240.0
+      ],
+      "offset": [
+        2048.0,
+        0.0,
+        -1024.0
+      ],
+      "terrain_render": "e394240_n5705728/terrain_render.glbraw",
+      "terrain_collision": "e394240_n5705728/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e394752_n5705728",
+      "bbox": [
+        394752.0,
+        5705728.0,
+        395264.0,
+        5706240.0
+      ],
+      "offset": [
+        2560.0,
+        0.0,
+        -1024.0
+      ],
+      "terrain_render": "e394752_n5705728/terrain_render.glbraw",
+      "terrain_collision": "e394752_n5705728/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e392192_n5706240",
+      "bbox": [
+        392192.0,
+        5706240.0,
+        392704.0,
+        5706752.0
+      ],
+      "offset": [
+        0.0,
+        0.0,
+        -1536.0
+      ],
+      "terrain_render": "e392192_n5706240/terrain_render.glbraw",
+      "terrain_collision": "e392192_n5706240/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e392704_n5706240",
+      "bbox": [
+        392704.0,
+        5706240.0,
+        393216.0,
+        5706752.0
+      ],
+      "offset": [
+        512.0,
+        0.0,
+        -1536.0
+      ],
+      "terrain_render": "e392704_n5706240/terrain_render.glbraw",
+      "terrain_collision": "e392704_n5706240/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e393216_n5706240",
+      "bbox": [
+        393216.0,
+        5706240.0,
+        393728.0,
+        5706752.0
+      ],
+      "offset": [
+        1024.0,
+        0.0,
+        -1536.0
+      ],
+      "terrain_render": "e393216_n5706240/terrain_render.glbraw",
+      "terrain_collision": "e393216_n5706240/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e393728_n5706240",
+      "bbox": [
+        393728.0,
+        5706240.0,
+        394240.0,
+        5706752.0
+      ],
+      "offset": [
+        1536.0,
+        0.0,
+        -1536.0
+      ],
+      "terrain_render": "e393728_n5706240/terrain_render.glbraw",
+      "terrain_collision": "e393728_n5706240/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e394240_n5706240",
+      "bbox": [
+        394240.0,
+        5706240.0,
+        394752.0,
+        5706752.0
+      ],
+      "offset": [
+        2048.0,
+        0.0,
+        -1536.0
+      ],
+      "terrain_render": "e394240_n5706240/terrain_render.glbraw",
+      "terrain_collision": "e394240_n5706240/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e394752_n5706240",
+      "bbox": [
+        394752.0,
+        5706240.0,
+        395264.0,
+        5706752.0
+      ],
+      "offset": [
+        2560.0,
+        0.0,
+        -1536.0
+      ],
+      "terrain_render": "e394752_n5706240/terrain_render.glbraw",
+      "terrain_collision": "e394752_n5706240/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e392192_n5706752",
+      "bbox": [
+        392192.0,
+        5706752.0,
+        392704.0,
+        5707264.0
+      ],
+      "offset": [
+        0.0,
+        0.0,
+        -2048.0
+      ],
+      "terrain_render": "e392192_n5706752/terrain_render.glbraw",
+      "terrain_collision": "e392192_n5706752/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e392704_n5706752",
+      "bbox": [
+        392704.0,
+        5706752.0,
+        393216.0,
+        5707264.0
+      ],
+      "offset": [
+        512.0,
+        0.0,
+        -2048.0
+      ],
+      "terrain_render": "e392704_n5706752/terrain_render.glbraw",
+      "terrain_collision": "e392704_n5706752/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e393216_n5706752",
+      "bbox": [
+        393216.0,
+        5706752.0,
+        393728.0,
+        5707264.0
+      ],
+      "offset": [
+        1024.0,
+        0.0,
+        -2048.0
+      ],
+      "terrain_render": "e393216_n5706752/terrain_render.glbraw",
+      "terrain_collision": "e393216_n5706752/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e393728_n5706752",
+      "bbox": [
+        393728.0,
+        5706752.0,
+        394240.0,
+        5707264.0
+      ],
+      "offset": [
+        1536.0,
+        0.0,
+        -2048.0
+      ],
+      "terrain_render": "e393728_n5706752/terrain_render.glbraw",
+      "terrain_collision": "e393728_n5706752/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e394240_n5706752",
+      "bbox": [
+        394240.0,
+        5706752.0,
+        394752.0,
+        5707264.0
+      ],
+      "offset": [
+        2048.0,
+        0.0,
+        -2048.0
+      ],
+      "terrain_render": "e394240_n5706752/terrain_render.glbraw",
+      "terrain_collision": "e394240_n5706752/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e394752_n5706752",
+      "bbox": [
+        394752.0,
+        5706752.0,
+        395264.0,
+        5707264.0
+      ],
+      "offset": [
+        2560.0,
+        0.0,
+        -2048.0
+      ],
+      "terrain_render": "e394752_n5706752/terrain_render.glbraw",
+      "terrain_collision": "e394752_n5706752/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e392192_n5707264",
+      "bbox": [
+        392192.0,
+        5707264.0,
+        392704.0,
+        5707776.0
+      ],
+      "offset": [
+        0.0,
+        0.0,
+        -2560.0
+      ],
+      "terrain_render": "e392192_n5707264/terrain_render.glbraw",
+      "terrain_collision": "e392192_n5707264/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e392704_n5707264",
+      "bbox": [
+        392704.0,
+        5707264.0,
+        393216.0,
+        5707776.0
+      ],
+      "offset": [
+        512.0,
+        0.0,
+        -2560.0
+      ],
+      "terrain_render": "e392704_n5707264/terrain_render.glbraw",
+      "terrain_collision": "e392704_n5707264/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e393216_n5707264",
+      "bbox": [
+        393216.0,
+        5707264.0,
+        393728.0,
+        5707776.0
+      ],
+      "offset": [
+        1024.0,
+        0.0,
+        -2560.0
+      ],
+      "terrain_render": "e393216_n5707264/terrain_render.glbraw",
+      "terrain_collision": "e393216_n5707264/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e393728_n5707264",
+      "bbox": [
+        393728.0,
+        5707264.0,
+        394240.0,
+        5707776.0
+      ],
+      "offset": [
+        1536.0,
+        0.0,
+        -2560.0
+      ],
+      "terrain_render": "e393728_n5707264/terrain_render.glbraw",
+      "terrain_collision": "e393728_n5707264/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e394240_n5707264",
+      "bbox": [
+        394240.0,
+        5707264.0,
+        394752.0,
+        5707776.0
+      ],
+      "offset": [
+        2048.0,
+        0.0,
+        -2560.0
+      ],
+      "terrain_render": "e394240_n5707264/terrain_render.glbraw",
+      "terrain_collision": "e394240_n5707264/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e394752_n5707264",
+      "bbox": [
+        394752.0,
+        5707264.0,
+        395264.0,
+        5707776.0
+      ],
+      "offset": [
+        2560.0,
+        0.0,
+        -2560.0
+      ],
+      "terrain_render": "e394752_n5707264/terrain_render.glbraw",
+      "terrain_collision": "e394752_n5707264/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e392192_n5707776",
+      "bbox": [
+        392192.0,
+        5707776.0,
+        392704.0,
+        5708288.0
+      ],
+      "offset": [
+        0.0,
+        0.0,
+        -3072.0
+      ],
+      "terrain_render": "e392192_n5707776/terrain_render.glbraw",
+      "terrain_collision": "e392192_n5707776/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e392704_n5707776",
+      "bbox": [
+        392704.0,
+        5707776.0,
+        393216.0,
+        5708288.0
+      ],
+      "offset": [
+        512.0,
+        0.0,
+        -3072.0
+      ],
+      "terrain_render": "e392704_n5707776/terrain_render.glbraw",
+      "terrain_collision": "e392704_n5707776/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e393216_n5707776",
+      "bbox": [
+        393216.0,
+        5707776.0,
+        393728.0,
+        5708288.0
+      ],
+      "offset": [
+        1024.0,
+        0.0,
+        -3072.0
+      ],
+      "terrain_render": "e393216_n5707776/terrain_render.glbraw",
+      "terrain_collision": "e393216_n5707776/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e393728_n5707776",
+      "bbox": [
+        393728.0,
+        5707776.0,
+        394240.0,
+        5708288.0
+      ],
+      "offset": [
+        1536.0,
+        0.0,
+        -3072.0
+      ],
+      "terrain_render": "e393728_n5707776/terrain_render.glbraw",
+      "terrain_collision": "e393728_n5707776/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e394240_n5707776",
+      "bbox": [
+        394240.0,
+        5707776.0,
+        394752.0,
+        5708288.0
+      ],
+      "offset": [
+        2048.0,
+        0.0,
+        -3072.0
+      ],
+      "terrain_render": "e394240_n5707776/terrain_render.glbraw",
+      "terrain_collision": "e394240_n5707776/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e394752_n5707776",
+      "bbox": [
+        394752.0,
+        5707776.0,
+        395264.0,
+        5708288.0
+      ],
+      "offset": [
+        2560.0,
+        0.0,
+        -3072.0
+      ],
+      "terrain_render": "e394752_n5707776/terrain_render.glbraw",
+      "terrain_collision": "e394752_n5707776/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e392192_n5708288",
+      "bbox": [
+        392192.0,
+        5708288.0,
+        392704.0,
+        5708800.0
+      ],
+      "offset": [
+        0.0,
+        0.0,
+        -3584.0
+      ],
+      "terrain_render": "e392192_n5708288/terrain_render.glbraw",
+      "terrain_collision": "e392192_n5708288/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e392704_n5708288",
+      "bbox": [
+        392704.0,
+        5708288.0,
+        393216.0,
+        5708800.0
+      ],
+      "offset": [
+        512.0,
+        0.0,
+        -3584.0
+      ],
+      "terrain_render": "e392704_n5708288/terrain_render.glbraw",
+      "terrain_collision": "e392704_n5708288/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e393216_n5708288",
+      "bbox": [
+        393216.0,
+        5708288.0,
+        393728.0,
+        5708800.0
+      ],
+      "offset": [
+        1024.0,
+        0.0,
+        -3584.0
+      ],
+      "terrain_render": "e393216_n5708288/terrain_render.glbraw",
+      "terrain_collision": "e393216_n5708288/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e393728_n5708288",
+      "bbox": [
+        393728.0,
+        5708288.0,
+        394240.0,
+        5708800.0
+      ],
+      "offset": [
+        1536.0,
+        0.0,
+        -3584.0
+      ],
+      "terrain_render": "e393728_n5708288/terrain_render.glbraw",
+      "terrain_collision": "e393728_n5708288/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e394240_n5708288",
+      "bbox": [
+        394240.0,
+        5708288.0,
+        394752.0,
+        5708800.0
+      ],
+      "offset": [
+        2048.0,
+        0.0,
+        -3584.0
+      ],
+      "terrain_render": "e394240_n5708288/terrain_render.glbraw",
+      "terrain_collision": "e394240_n5708288/terrain_collision.glbraw",
+      "buildings": []
+    },
+    {
+      "id": "e394752_n5708288",
+      "bbox": [
+        394752.0,
+        5708288.0,
+        395264.0,
+        5708800.0
+      ],
+      "offset": [
+        2560.0,
+        0.0,
+        -3584.0
+      ],
+      "terrain_render": "e394752_n5708288/terrain_render.glbraw",
+      "terrain_collision": "e394752_n5708288/terrain_collision.glbraw",
+      "buildings": []
+    }
+  ]
+}
