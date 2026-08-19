@@ -1,35 +1,14 @@
 name: Review loop orchestrator
 
-# State machine:
-#   DATA_READY -> RUNTIME_UPDATED -> CI_GREEN
-#     -> GEMINI_REVIEWED -> GROK_REVIEWED
-#     -> SUPERVISOR_GATE -> MERGE_READY | REWORK
+# Current review state machine (GitHub Models was retired on 2026-07-30):
+#   CI_GREEN -> COPILOT_REVIEW_REQUESTED -> SUPERVISOR_REQUIRED
 #
-# This workflow is the entry point. It:
-#   1. Confirms CI is green (fails fast if not).
-#   2. Calls gemini-review.yml (architecture/correctness gate).
-#   3. Calls grok-review.yml (adversarial/runtime-risk gate).
-#   4. Posts a SUPERVISOR_GATE summary comment.
-#   5. Sets a MERGE_READY or REWORK label.
-#   6. Never merges automatically.
+# Copilot code review is a COMMENT review, not an approval. This workflow never
+# auto-merges and never pretends that a Copilot comment is a human approval.
 #
 # Trigger:
-#   - workflow_dispatch (manual, safe test trigger against any open PR)
-#   - pull_request label added (label name: "review-loop")
-#
-# Prerequisites (document blockers):
-#   - GitHub Models must be enabled for the repository.
-#     Path: Settings > Copilot > GitHub Models
-#     Without this, gemini-review and grok-review jobs will fail with HTTP 403/404.
-#   - The GITHUB_TOKEN needs models: read scope.
-#     This is granted automatically on GitHub-hosted runners when Models is enabled.
-#   - gh CLI is pre-installed on ubuntu-latest runners (no extra setup required).
-#   - No external secrets needed; only the built-in GITHUB_TOKEN is used.
-#
-# GitHub Agentic Workflows (gh aw) status:
-#   gh aw is not yet GA on GitHub-hosted runners as of 2026-08.
-#   This workflow uses standard workflow_call composition instead, which is
-#   equivalent and fully supported. Revisit when gh aw becomes generally available.
+#   - workflow_dispatch with a PR number
+#   - add the label "review-loop" to an open PR
 
 on:
   workflow_dispatch:
@@ -45,10 +24,8 @@ permissions:
   contents: read
   pull-requests: write
   issues: write
-  models: read
 
 jobs:
-  # ── Guard: only run when the label trigger matches ──────────────────────────
   gate-label:
     runs-on: ubuntu-latest
     if: >
@@ -70,134 +47,112 @@ jobs:
           fi
           echo "pr_number=$PR" >> "$GITHUB_OUTPUT"
 
-  # ── Gate 1: CI must be green ─────────────────────────────────────────────
   ci-green-check:
     needs: gate-label
     runs-on: ubuntu-latest
     outputs:
       state: ${{ steps.check.outputs.state }}
+      bad_checks: ${{ steps.check.outputs.bad_checks }}
     steps:
-      - name: Check CI status on PR head
+      - name: Check external CI status on PR head
         id: check
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ needs.gate-label.outputs.pr_number }}
         run: |
           set -euo pipefail
-          STATUS=$(gh pr view "$PR_NUMBER" \
-            --repo "$GITHUB_REPOSITORY" \
-            --json statusCheckRollup \
-            --jq '.statusCheckRollup // [] | map(select(.status != "COMPLETED" or .conclusion != "SUCCESS")) | length')
-          if [ "$STATUS" != "0" ]; then
-            echo "::warning::$STATUS check(s) not green. State remains CI_GREEN_PENDING."
+          # Do not count this review-loop workflow against itself. gh pr checks
+          # exposes a normalized bucket: pass/fail/pending/skipping/cancel.
+          gh pr checks "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
+            --json name,state,workflow,bucket > /tmp/checks.json
+          BAD=$(python3 - <<'PY'
+          import json
+          checks=json.load(open('/tmp/checks.json'))
+          bad=[]
+          for c in checks:
+              if c.get('workflow') == 'Review loop orchestrator':
+                  continue
+              if c.get('bucket') in {'fail','pending','cancel'}:
+                  bad.append(f"{c.get('workflow','?')}::{c.get('name','?')}::{c.get('bucket','?')}")
+          print(len(bad))
+          open('/tmp/bad-checks.txt','w').write('\n'.join(bad))
+          PY
+          )
+          echo "bad_checks=$BAD" >> "$GITHUB_OUTPUT"
+          if [ "$BAD" != "0" ]; then
+            echo "::warning::$BAD external check(s) are not green"
+            cat /tmp/bad-checks.txt || true
             echo "state=CI_GREEN_PENDING" >> "$GITHUB_OUTPUT"
           else
             echo "state=CI_GREEN" >> "$GITHUB_OUTPUT"
           fi
 
-  # ── Gate 2: Gemini architecture/correctness review ───────────────────────
-  gemini:
+  request-copilot-review:
     needs: [gate-label, ci-green-check]
     if: needs.ci-green-check.outputs.state == 'CI_GREEN'
-    uses: ./.github/workflows/gemini-review.yml
-    with:
-      pr_number: ${{ needs.gate-label.outputs.pr_number }}
-      state: CI_GREEN
-    permissions:
-      contents: read
-      pull-requests: write
-      models: read
+    runs-on: ubuntu-latest
+    outputs:
+      outcome: ${{ steps.request.outputs.outcome }}
+    steps:
+      - name: Request GitHub Copilot code review
+        id: request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.gate-label.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          gh api --method POST \
+            -H 'Accept: application/vnd.github+json' \
+            "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/requested_reviewers" \
+            -f 'reviewers[]=copilot-pull-request-reviewer[bot]'
+          echo "outcome=COPILOT_REVIEW_REQUESTED" >> "$GITHUB_OUTPUT"
 
-  # ── Gate 3: Grok adversarial/runtime-risk review ─────────────────────────
-  grok:
-    needs: [gate-label, gemini]
-    if: needs.gemini.outputs.outcome == 'GEMINI_REVIEWED'
-    uses: ./.github/workflows/grok-review.yml
-    with:
-      pr_number: ${{ needs.gate-label.outputs.pr_number }}
-      state: GEMINI_REVIEWED
-    permissions:
-      contents: read
-      pull-requests: write
-      models: read
-
-  # ── Gate 4: Supervisor summary + label ───────────────────────────────────
   supervisor-gate:
-    needs: [gate-label, ci-green-check, gemini, grok]
+    needs: [gate-label, ci-green-check, request-copilot-review]
     if: always() && needs.gate-label.result == 'success'
     runs-on: ubuntu-latest
     steps:
-      - name: Compute final state
+      - name: Compute current state
         id: state
         env:
           CI_STATE: ${{ needs.ci-green-check.outputs.state }}
-          GEMINI_OUT: ${{ needs.gemini.outputs.outcome }}
-          GROK_OUT: ${{ needs.grok.outputs.outcome }}
+          REVIEW_RESULT: ${{ needs.request-copilot-review.result }}
+          REVIEW_OUTCOME: ${{ needs.request-copilot-review.outputs.outcome }}
         run: |
-          if [ "$GROK_OUT" = "GROK_REVIEWED" ] && [ "$GEMINI_OUT" = "GEMINI_REVIEWED" ] && [ "$CI_STATE" = "CI_GREEN" ]; then
-            echo "final=MERGE_READY" >> "$GITHUB_OUTPUT"
+          if [ "$CI_STATE" = "CI_GREEN" ] && [ "$REVIEW_RESULT" = "success" ] && [ "$REVIEW_OUTCOME" = "COPILOT_REVIEW_REQUESTED" ]; then
+            echo "final=SUPERVISOR_REQUIRED" >> "$GITHUB_OUTPUT"
           else
             echo "final=REWORK" >> "$GITHUB_OUTPUT"
-            echo "ci_state=$CI_STATE" >> "$GITHUB_OUTPUT"
-            echo "gemini_out=$GEMINI_OUT" >> "$GITHUB_OUTPUT"
-            echo "grok_out=$GROK_OUT" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Ensure MERGE_READY and REWORK labels exist
+      - name: Ensure state labels exist
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh label create "merge-ready" --color "0e8a16" --description "All review gates passed" \
-            --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
-          gh label create "rework" --color "e11d48" --description "Review gate requested changes" \
-            --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
+          gh label create "review-requested" --color "1d76db" --description "Copilot review requested; supervisor decision pending" --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
+          gh label create "rework" --color "e11d48" --description "CI or review orchestration requires rework" --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
 
-      - name: Apply outcome label
+      - name: Apply state label
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ needs.gate-label.outputs.pr_number }}
           FINAL: ${{ steps.state.outputs.final }}
         run: |
-          if [ "$FINAL" = "MERGE_READY" ]; then
-            gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
-              --add-label "merge-ready" --remove-label "rework" 2>/dev/null || \
-            gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --add-label "merge-ready"
+          if [ "$FINAL" = "SUPERVISOR_REQUIRED" ]; then
+            gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --add-label "review-requested" --remove-label "rework" 2>/dev/null || \
+              gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --add-label "review-requested"
           else
-            gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
-              --add-label "rework" --remove-label "merge-ready" 2>/dev/null || \
-            gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --add-label "rework"
+            gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --add-label "rework" --remove-label "review-requested" 2>/dev/null || \
+              gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --add-label "rework"
           fi
 
-      - name: Post supervisor summary comment
+      - name: Post supervisor handoff
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ needs.gate-label.outputs.pr_number }}
           FINAL: ${{ steps.state.outputs.final }}
           CI_STATE: ${{ needs.ci-green-check.outputs.state }}
-          GEMINI_OUT: ${{ needs.gemini.outputs.outcome }}
-          GROK_OUT: ${{ needs.grok.outputs.outcome }}
+          REVIEW_OUTCOME: ${{ needs.request-copilot-review.outputs.outcome }}
         run: |
-          if [ "$FINAL" = "MERGE_READY" ]; then
-            ICON="✅"
-          else
-            ICON="🔁"
-          fi
-
-          BODY="${ICON} **SUPERVISOR_GATE** → \`$FINAL\`
-
-          | Gate | State |
-          |---|---|
-          | CI | \`$CI_STATE\` |
-          | Gemini architecture review | \`${GEMINI_OUT:-SKIPPED}\` |
-          | Grok adversarial review | \`${GROK_OUT:-SKIPPED}\` |
-          | **Final** | **\`$FINAL\`** |
-
-          **State machine path:**
-          \`DATA_READY → RUNTIME_UPDATED → CI_GREEN → GEMINI_REVIEWED → GROK_REVIEWED → SUPERVISOR_GATE → $FINAL\`
-
-          > ⚠️ No auto-merge will occur. A human must merge this PR after \`MERGE_READY\` is set.
-
-          ---
-          *Posted by review-loop orchestrator. Run: [\`$GITHUB_RUN_ID\`]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)*"
-
+          BODY="### Review-loop v2\n\n| Gate | State |\n|---|---|\n| External CI | \`$CI_STATE\` |\n| Copilot code review | \`${REVIEW_OUTCOME:-NOT_REQUESTED}\` |\n| **Current state** | **\`$FINAL\`** |\n\n\`CI_GREEN → COPILOT_REVIEW_REQUESTED → SUPERVISOR_REQUIRED\`\n\nCopilot code review is advisory and does not count as an approval. No auto-merge occurs.\n\n---\nRun: [$GITHUB_RUN_ID]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)"
           gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$BODY"
