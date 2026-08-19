@@ -94,17 +94,25 @@ jobs:
     outputs:
       outcome: ${{ steps.request.outputs.outcome }}
     steps:
-      - name: Request GitHub Copilot code review
+      - name: Request GitHub Copilot code review idempotently
         id: request
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ needs.gate-label.outputs.pr_number }}
         run: |
           set -euo pipefail
-          gh api --method POST \
+          REQUESTED=$(gh api \
             -H 'Accept: application/vnd.github+json' \
             "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/requested_reviewers" \
-            -f 'reviewers[]=copilot-pull-request-reviewer[bot]'
+            --jq '.users[].login' 2>/dev/null || true)
+          if printf '%s\n' "$REQUESTED" | grep -Eq '^copilot-pull-request-reviewer(\[bot\])?$'; then
+            echo "Copilot review is already requested; keeping the gate idempotent."
+          else
+            gh api --method POST \
+              -H 'Accept: application/vnd.github+json' \
+              "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/requested_reviewers" \
+              -f 'reviewers[]=copilot-pull-request-reviewer[bot]'
+          fi
           echo "outcome=COPILOT_REVIEW_REQUESTED" >> "$GITHUB_OUTPUT"
 
   supervisor-gate:
@@ -129,7 +137,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh label create "review-requested" --color "1d76db" --description "Copilot review requested; supervisor decision pending" --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
+          gh label create "supervisor-required" --color "1d76db" --description "Copilot review requested; supervisor decision pending" --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
           gh label create "rework" --color "e11d48" --description "CI or review orchestration requires rework" --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
 
       - name: Apply state label
@@ -139,10 +147,10 @@ jobs:
           FINAL: ${{ steps.state.outputs.final }}
         run: |
           if [ "$FINAL" = "SUPERVISOR_REQUIRED" ]; then
-            gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --add-label "review-requested" --remove-label "rework" 2>/dev/null || \
-              gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --add-label "review-requested"
+            gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --add-label "supervisor-required" --remove-label "rework" 2>/dev/null || \
+              gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --add-label "supervisor-required"
           else
-            gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --add-label "rework" --remove-label "review-requested" 2>/dev/null || \
+            gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --add-label "rework" --remove-label "supervisor-required" 2>/dev/null || \
               gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --add-label "rework"
           fi
 
