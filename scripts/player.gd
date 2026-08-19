@@ -18,17 +18,19 @@ var _pitch := deg_to_rad(-18.0)
 var _spawn := Vector3(0.0, 1.25, 0.0)
 var _last_touch_look_id := -1
 
-## Height above surface to place the player after a raycast spawn.
 const SPAWN_ABOVE_SURFACE := 1.25
-## Raycast length downward when resolving surface Y.
 const SPAWN_RAY_LENGTH := 512.0
-## Maximum deferred re-resolution attempts before accepting the fallback position.
-const MAX_RESOLVE_RETRIES := 8
+const MAX_RESOLVE_RETRIES := 24
+const SPAWN_SEARCH_STEP := 4.0
+const SPAWN_SEARCH_RINGS := 12
+const SPAWN_CLEARANCE_RADIUS := 1.2
+const SPAWN_MIN_GROUND_NORMAL_Y := 0.65
+const HISTORIC_BAD_SPAWN_XZ := Vector2(2652.0, -376.0)
 
-## Set to true when an initial spawn raycast misses (collision not yet ready).
-## main.gd clears this via resolve_spawn_when_ready() after collision_ready fires.
 var _pending_spawn_resolve := false
 var _resolve_retries := 0
+var _spawn_resolve_active := false
+var _spawn_building_bounds: Array[AABB] = []
 
 var spring_arm: SpringArm3D
 var camera: Camera3D
@@ -104,20 +106,16 @@ func _physics_process(delta: float) -> void:
 
 	velocity.x = move_toward(velocity.x, target_xz.x, accel * delta)
 	velocity.z = move_toward(velocity.z, target_xz.z, accel * delta)
-
 	if not is_on_floor():
 		velocity.y -= gravity_strength * delta
-	
 	move_and_slide()
 	coordinates_changed.emit(global_position)
-
 	if global_position.y < -25.0:
 		reset_to_spawn()
 
 func _unhandled_input(event: InputEvent) -> void:
 	if not controls_enabled:
 		return
-
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		_apply_look(event.relative)
 	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
@@ -152,53 +150,187 @@ func jump() -> void:
 		velocity.y = jump_velocity
 
 func reset_to_spawn() -> void:
-	var resolved := _resolve_surface_position(_spawn)
-	global_position = resolved
-	velocity = Vector3.ZERO
+	_refresh_spawn_building_bounds()
+	var safe := _find_safe_spawn(_spawn)
+	if bool(safe.get("ok", false)):
+		var resolved: Vector3 = safe["position"] as Vector3
+		global_position = resolved
+		velocity = Vector3.ZERO
+		_spawn = resolved
+		print("RESET_SAFE_RESOLVED position=%s" % resolved)
+		return
+	# Never fall back to a blind raycast that could put the player under a roof.
+	resolve_spawn_when_ready()
 
-
-## Teleport to a new XZ world position, resolving Y via downward raycast.
 func teleport_to(world_xz: Vector2) -> void:
 	var candidate := Vector3(world_xz.x, _spawn.y, world_xz.y)
-	var resolved := _resolve_surface_position(candidate)
-	global_position = resolved
-	velocity = Vector3.ZERO
-	_spawn = global_position
+	_spawn = candidate
+	_refresh_spawn_building_bounds()
+	var safe := _find_safe_spawn(candidate)
+	if bool(safe.get("ok", false)):
+		var resolved: Vector3 = safe["position"] as Vector3
+		global_position = resolved
+		velocity = Vector3.ZERO
+		_spawn = resolved
+		print("TELEPORT_SAFE_RESOLVED position=%s" % resolved)
+		return
+	# Keep the player where they are until a safe surface is actually available.
+	resolve_spawn_when_ready()
 
-
-## Called by main.gd when WorldStreamingManager.collision_ready fires.
-## Attempts to re-resolve spawn Y now that collision meshes are in the physics world.
 func resolve_spawn_when_ready() -> void:
-	if not _pending_spawn_resolve:
+	_resolve_retries = 0
+	_pending_spawn_resolve = true
+	_spawn_resolve_active = true
+	_refresh_spawn_building_bounds()
+	_validate_historic_bad_spawn()
+	print("SPAWN_RESOLVE_ARMED xz=(%.3f, %.3f)" % [_spawn.x, _spawn.z])
+	_schedule_spawn_resolve()
+
+func _schedule_spawn_resolve() -> void:
+	if not _spawn_resolve_active or not is_inside_tree():
+		return
+	var retry_timer := get_tree().create_timer(0.0, true, true)
+	retry_timer.timeout.connect(_attempt_spawn_resolve, CONNECT_ONE_SHOT)
+
+func _attempt_spawn_resolve() -> void:
+	if not _spawn_resolve_active or not is_inside_tree():
 		return
 	_resolve_retries += 1
-	var resolved := _resolve_surface_position(_spawn)
-	if resolved != _spawn or _resolve_retries >= MAX_RESOLVE_RETRIES:
+	var safe := _find_safe_spawn(_spawn)
+	if bool(safe.get("ok", false)):
+		var resolved: Vector3 = safe["position"] as Vector3
 		global_position = resolved
 		velocity = Vector3.ZERO
 		_spawn = resolved
 		_pending_spawn_resolve = false
-		if _resolve_retries >= MAX_RESOLVE_RETRIES:
-			push_warning("DortmundPlayer: spawn resolve hit retry limit; using fallback position %s" % resolved)
-		else:
-			print("DortmundPlayer: deferred spawn resolved to %s after %d attempt(s)" % [resolved, _resolve_retries])
-	# else: still a miss — will retry next collision_ready signal
+		_spawn_resolve_active = false
+		print("SPAWN_SAFE_RESOLVED position=%s attempts=%d building_bounds=%d" % [
+			resolved, _resolve_retries, _spawn_building_bounds.size()])
+		return
 
+	_pending_spawn_resolve = true
+	print("SPAWN_SAFE_SEARCH_RETRY attempt=%d preferred_xz=(%.3f, %.3f)" % [
+		_resolve_retries, _spawn.x, _spawn.z])
+	if _resolve_retries >= MAX_RESOLVE_RETRIES:
+		_spawn_resolve_active = false
+		push_error("SPAWN_SAFE_RESOLVE_FAILED after %d attempts at preferred_xz=(%.3f, %.3f)" % [
+			_resolve_retries, _spawn.x, _spawn.z])
+		return
+	_refresh_spawn_building_bounds()
+	_schedule_spawn_resolve()
 
-## Cast a ray downward from pos and return SPAWN_ABOVE_SURFACE m above the first hit.
-## On a ray miss, marks _pending_spawn_resolve=true so the caller can retry later.
-func _resolve_surface_position(pos: Vector3) -> Vector3:
+func _find_safe_spawn(preferred: Vector3) -> Dictionary:
+	var offsets := _spawn_candidate_offsets()
+	for offset: Vector2 in offsets:
+		var probe := Vector3(preferred.x + offset.x, preferred.y, preferred.z + offset.y)
+		var hit := _surface_hit(probe)
+		if hit.is_empty():
+			continue
+		var normal: Vector3 = hit.get("normal", Vector3.UP) as Vector3
+		if normal.y < SPAWN_MIN_GROUND_NORMAL_Y:
+			continue
+		var ground: Vector3 = hit["position"] as Vector3
+		if not _is_ground_clear_of_buildings(ground):
+			print("SPAWN_CANDIDATE_BLOCKED xz=(%.3f, %.3f) ground_y=%.3f" % [
+				probe.x, probe.z, ground.y])
+			continue
+		return {
+			"ok": true,
+			"position": Vector3(probe.x, ground.y + SPAWN_ABOVE_SURFACE, probe.z),
+			"ground": ground,
+			"offset": offset,
+		}
+	return {"ok": false}
+
+func _spawn_candidate_offsets() -> Array[Vector2]:
+	var result: Array[Vector2] = [Vector2.ZERO]
+	for ring in range(1, SPAWN_SEARCH_RINGS + 1):
+		for ix in range(-ring, ring + 1):
+			result.append(Vector2(float(ix) * SPAWN_SEARCH_STEP, -float(ring) * SPAWN_SEARCH_STEP))
+			result.append(Vector2(float(ix) * SPAWN_SEARCH_STEP, float(ring) * SPAWN_SEARCH_STEP))
+		for iz in range(-ring + 1, ring):
+			result.append(Vector2(-float(ring) * SPAWN_SEARCH_STEP, float(iz) * SPAWN_SEARCH_STEP))
+			result.append(Vector2(float(ring) * SPAWN_SEARCH_STEP, float(iz) * SPAWN_SEARCH_STEP))
+	return result
+
+func _refresh_spawn_building_bounds() -> void:
+	_spawn_building_bounds.clear()
+	var root: Node = get_tree().current_scene
+	if root == null:
+		root = get_tree().root
+	_collect_building_bounds(root, false)
+	print("BUILDING_BOUNDS_CACHED count=%d" % _spawn_building_bounds.size())
+
+func _collect_building_bounds(node: Node, inside_building: bool) -> void:
+	var now_inside := inside_building or String(node.name).begins_with("buildings_")
+	if now_inside and node is MeshInstance3D:
+		var mi := node as MeshInstance3D
+		if mi.mesh != null:
+			_spawn_building_bounds.append(_global_mesh_aabb(mi))
+	for child in node.get_children():
+		_collect_building_bounds(child, now_inside)
+
+func _global_mesh_aabb(mi: MeshInstance3D) -> AABB:
+	var local_box := mi.get_aabb()
+	var corners: Array[Vector3] = [
+		local_box.position,
+		local_box.position + Vector3(local_box.size.x, 0.0, 0.0),
+		local_box.position + Vector3(0.0, local_box.size.y, 0.0),
+		local_box.position + Vector3(0.0, 0.0, local_box.size.z),
+		local_box.position + Vector3(local_box.size.x, local_box.size.y, 0.0),
+		local_box.position + Vector3(local_box.size.x, 0.0, local_box.size.z),
+		local_box.position + Vector3(0.0, local_box.size.y, local_box.size.z),
+		local_box.position + local_box.size,
+	]
+	var first: Vector3 = mi.global_transform * corners[0]
+	var result := AABB(first, Vector3.ZERO)
+	for i in range(1, corners.size()):
+		result = result.expand(mi.global_transform * corners[i])
+	return result
+
+func _is_ground_clear_of_buildings(ground: Vector3) -> bool:
+	var min_x := ground.x - SPAWN_CLEARANCE_RADIUS
+	var max_x := ground.x + SPAWN_CLEARANCE_RADIUS
+	var min_z := ground.z - SPAWN_CLEARANCE_RADIUS
+	var max_z := ground.z + SPAWN_CLEARANCE_RADIUS
+	for box: AABB in _spawn_building_bounds:
+		var box_end := box.position + box.size
+		var overlaps_x := box_end.x >= min_x and box.position.x <= max_x
+		var overlaps_z := box_end.z >= min_z and box.position.z <= max_z
+		var structure_above_ground := box_end.y > ground.y + 0.5
+		if overlaps_x and overlaps_z and structure_above_ground:
+			return false
+	return true
+
+func _validate_historic_bad_spawn() -> void:
+	var probe := Vector3(HISTORIC_BAD_SPAWN_XZ.x, _spawn.y, HISTORIC_BAD_SPAWN_XZ.y)
+	var hit := _surface_hit(probe)
+	if hit.is_empty():
+		push_error("SPAWN_REGRESSION_GUARD_FAILED: historic point has no terrain hit")
+		return
+	var ground: Vector3 = hit["position"] as Vector3
+	if _is_ground_clear_of_buildings(ground):
+		push_error("SPAWN_REGRESSION_GUARD_FAILED: historic in-building point was accepted")
+		return
+	print("SPAWN_REGRESSION_BLOCKED_OK xz=(%.3f, %.3f) ground_y=%.3f" % [
+		HISTORIC_BAD_SPAWN_XZ.x, HISTORIC_BAD_SPAWN_XZ.y, ground.y])
+
+func _surface_hit(pos: Vector3) -> Dictionary:
 	var space_state := get_world_3d().direct_space_state
 	if space_state == null:
-		_pending_spawn_resolve = true
-		return pos
+		return {}
 	var ray_from := Vector3(pos.x, pos.y + SPAWN_RAY_LENGTH * 0.5, pos.z)
-	var ray_to   := Vector3(pos.x, pos.y - SPAWN_RAY_LENGTH,        pos.z)
+	var ray_to := Vector3(pos.x, pos.y - SPAWN_RAY_LENGTH, pos.z)
 	var query := PhysicsRayQueryParameters3D.create(ray_from, ray_to)
 	query.exclude = [self]
-	var result := space_state.intersect_ray(query)
+	query.hit_back_faces = true
+	return space_state.intersect_ray(query)
+
+func _resolve_surface_position(pos: Vector3) -> Vector3:
+	var result := _surface_hit(pos)
 	if result.is_empty():
 		_pending_spawn_resolve = true
 		return pos
 	_pending_spawn_resolve = false
-	return Vector3(pos.x, result["position"].y + SPAWN_ABOVE_SURFACE, pos.z)
+	print("SPAWN_RAY_HIT y=%.3f collider=%s" % [float(result["position"].y), result["collider"]])
+	return Vector3(pos.x, float(result["position"].y) + SPAWN_ABOVE_SURFACE, pos.z)

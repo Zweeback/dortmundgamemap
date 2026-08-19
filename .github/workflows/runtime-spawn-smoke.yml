@@ -1,0 +1,85 @@
+name: Runtime spawn smoke
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/main.gd'
+      - 'scripts/player.gd'
+      - 'scripts/world_streaming_manager.gd'
+      - '.github/workflows/runtime-spawn-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  runtime-spawn-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download verified 48-cell runtime fixture
+        uses: actions/download-artifact@v4
+        with:
+          name: dortmund-connected-world-48cells
+          path: assets/world_cells
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: Zweeback/dortmundgamemap
+          run-id: 32152051688
+
+      - name: Verify fixture contract
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('assets/world_cells/index.json')
+          idx=json.loads(p.read_text())
+          assert idx['crs']=='EPSG:25832'
+          assert idx['world_origin']==[392192.0,5704704.0,100.0]
+          assert len(idx['cells'])==48
+          print('RUNTIME_FIXTURE_OK cells=48')
+          PY
+
+      - name: Install Godot 4.7.1
+        run: |
+          set -euxo pipefail
+          curl -L --fail --retry 4 -o /tmp/godot.zip 'https://downloads.godotengine.org/?flavor=stable&platform=linux.64&slug=linux.x86_64.zip&version=4.7.1'
+          unzip -q /tmp/godot.zip -d /tmp/godot
+          chmod +x /tmp/godot/Godot_v4.7.1-stable_linux.x86_64
+          sudo mv /tmp/godot/Godot_v4.7.1-stable_linux.x86_64 /usr/local/bin/godot
+          godot --version
+
+      - name: Import and run real-world spawn smoke
+        run: |
+          set -euxo pipefail
+          godot --headless --editor --path . --quit
+          timeout 30s godot --headless --path . --quit-after 180 2>&1 | tee /tmp/runtime-spawn.log || true
+          grep -q 'WorldStreamingManager: loaded 48 cells' /tmp/runtime-spawn.log
+          grep -q 'CELL_LOADED' /tmp/runtime-spawn.log
+          grep -q 'COLLISION_BATCH_READY' /tmp/runtime-spawn.log
+          grep -q 'BUILDING_BOUNDS_CACHED count=' /tmp/runtime-spawn.log
+          grep -q 'SPAWN_REGRESSION_BLOCKED_OK' /tmp/runtime-spawn.log
+          grep -q 'SPAWN_SAFE_RESOLVED' /tmp/runtime-spawn.log
+          grep -q 'START_VIEW mode=third_person' /tmp/runtime-spawn.log
+          if grep -q 'SPAWN_SAFE_RESOLVE_FAILED' /tmp/runtime-spawn.log; then
+            echo 'Safe spawn resolver exhausted retries' >&2
+            exit 1
+          fi
+          if grep -q 'SPAWN_REGRESSION_GUARD_FAILED' /tmp/runtime-spawn.log; then
+            echo 'Historic bad-spawn regression guard failed' >&2
+            exit 1
+          fi
+          python - <<'PY'
+          import re
+          text=open('/tmp/runtime-spawn.log', encoding='utf-8', errors='replace').read()
+          bounds=re.search(r'BUILDING_BOUNDS_CACHED count=(\d+)', text)
+          assert bounds and int(bounds.group(1)) > 0, 'building bounds missing'
+          spawn=re.search(r'SPAWN_SAFE_RESOLVED position=\(([-0-9.]+), ([-0-9.]+), ([-0-9.]+)\)', text)
+          assert spawn, 'resolved spawn coordinates missing'
+          x,y,z=map(float,spawn.groups())
+          assert y > -100.0, (x,y,z)
+          print(f'RUNTIME_SPAWN_OK x={x:.3f} y={y:.3f} z={z:.3f} bounds={bounds.group(1)}')
+          PY

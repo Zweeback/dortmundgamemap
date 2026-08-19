@@ -1,7 +1,7 @@
 ## WorldStreamingManager
 ##
 ## Reads assets/world_cells/index.json and streams 512 m world cells in/out
-## as the player moves.  Cells are placed in a shared Godot coordinate frame
+## as the player moves. Cells are placed in a shared Godot coordinate frame
 ## derived directly from canonical EPSG:25832 (UTM32N) origins — no hand-
 ## tuned offsets.
 ##
@@ -16,50 +16,31 @@
 ##
 ## Godot convention: x = Δeasting, y = altitude − vertical_origin, z = −Δnorthing
 ##
-## Android memory budget: keep LOAD_RADIUS_M ≤ 1024 m (≤ ~9 cells at 512 m).
+## Android memory budget: keep load radius ≤ 1024 m.
 
 extends Node3D
 class_name WorldStreamingManager
 
 signal cell_loaded(cell_id: String)
 signal cell_unloaded(cell_id: String)
-## Emitted when the first batch of terrain collision bodies has entered the
-## physics world — main.gd uses this to trigger deferred spawn resolution.
 signal collision_ready
 
-## Path that indexes cells; this matches the pipeline output location.
-const INDEX_PATH       := "res://assets/world_cells/index.json"
-## All relative cell asset paths in the index are resolved under this prefix.
+const INDEX_PATH := "res://assets/world_cells/index.json"
 const INDEX_ASSET_BASE := "res://assets/world_cells"
 
-## Player must be within this radius for a cell to load.
-@export var load_radius_m:   float = 768.0
-## Cell is freed when player exceeds this radius (hysteresis).
+@export var load_radius_m: float = 768.0
 @export var unload_radius_m: float = 1152.0
-## How often (seconds) streaming state is re-evaluated from _process.
 @export var check_interval_s: float = 0.5
 
-# ── parsed manifest ───────────────────────────────────────────────────────────
-var _world_origin := Vector3.ZERO   # canonical UTM origin as Godot (0,0,0)
+var _world_origin := Vector3.ZERO
 var _cells_meta: Array = []
-
-# ── runtime state ─────────────────────────────────────────────────────────────
-var _loaded_cells: Dictionary = {}  # cell_id → Node3D
-var _collision_cells_loading := 0   # count of cells that still owe a physics frame
+var _loaded_cells: Dictionary = {}
+var _collision_cells_loading := 0
 var _collision_ever_ready := false
 var _check_timer := 0.0
 
-## Assigned by main.gd after the player node is added to the scene.
 var player_ref: Node3D = null
-
-# ── spawn info ────────────────────────────────────────────────────────────────
-## Godot XZ for the default player spawn (derived from Phoenix-West anchor).
-## Falls back to (0,0) when the anchor cell is absent from the index.
 var spawn_godot_xz := Vector2.ZERO
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Public API
-# ─────────────────────────────────────────────────────────────────────────────
 
 func load_index() -> bool:
 	if not FileAccess.file_exists(INDEX_PATH):
@@ -77,37 +58,28 @@ func load_index() -> bool:
 		return false
 	var manifest: Dictionary = parsed as Dictionary
 
-	# world_origin: [easting, northing, height_m]
 	var wo: Array = manifest["world_origin"] as Array
 	_world_origin = Vector3(float(wo[0]), float(wo[2]), float(wo[1]))
-
 	_cells_meta = manifest["cells"] as Array
 
-	# Derive default spawn from Phoenix-West anchor: UTM bbox [394744, 5705000, …]
-	# Spawn point = centre of that cell, lifted 1.25 m above terrain (resolved later).
-	var anchor_e := 394844.0   # bbox_min_e + 100 m  (interior reference point)
-	var anchor_n := 5705080.0
+	# Verified against the published 48-cell artifact: the previous anchor
+	# E394844/N5705080 sat inside a LoD2 building shell. This nearby point has
+	# terrain support and a sampled building-free clearance envelope.
+	var anchor_e := 394820.0
+	var anchor_n := 5705088.0
 	spawn_godot_xz = utm_to_godot_xz(anchor_e, anchor_n)
+	print("SPAWN_ANCHOR_UTM e=%.1f n=%.1f godot=%s" % [anchor_e, anchor_n, spawn_godot_xz])
 
 	print("WorldStreamingManager: loaded %d cells, world_origin=%s" % [
 		_cells_meta.size(), wo])
 	return true
 
-
-## Convert UTM easting/northing to Godot XZ (y=0 plane).
 func utm_to_godot_xz(easting: float, northing: float) -> Vector2:
 	return Vector2(easting - _world_origin.x, -(northing - _world_origin.z))
 
-
-## Trigger a streaming update immediately (e.g. on first frame).
 func update_streaming(player_position: Vector3) -> void:
 	for meta in _cells_meta:
 		_evaluate_cell(meta, player_position)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Godot callbacks
-# ─────────────────────────────────────────────────────────────────────────────
 
 func _process(delta: float) -> void:
 	if player_ref == null:
@@ -118,37 +90,27 @@ func _process(delta: float) -> void:
 	_check_timer = 0.0
 	update_streaming(player_ref.global_position)
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Internal helpers
-# ─────────────────────────────────────────────────────────────────────────────
-
 func _evaluate_cell(meta: Dictionary, player_pos: Vector3) -> void:
 	var cid: String = meta["id"] as String
 	var offset: Array = meta["offset"] as Array
 	var ox := float(offset[0])
 	var oz := float(offset[2])
 	var dist := Vector2(player_pos.x - ox, player_pos.z - oz).length()
-
 	if dist <= load_radius_m and not _loaded_cells.has(cid):
 		_load_cell(meta)
 	elif dist > unload_radius_m and _loaded_cells.has(cid):
 		_unload_cell(cid)
 
-
 func _load_cell(meta: Dictionary) -> void:
 	var cid: String = meta["id"] as String
 	var offset: Array = meta["offset"] as Array
 	var cell_pos := Vector3(float(offset[0]), float(offset[1]), float(offset[2]))
-
 	var cell_root := Node3D.new()
 	cell_root.name = "Cell_" + cid
 	cell_root.position = cell_pos
 	add_child(cell_root)
-
 	var any_loaded := false
 
-	# ── terrain render ────────────────────────────────────────────────────────
 	var tr_path: String = INDEX_ASSET_BASE + "/" + (meta["terrain_render"] as String)
 	var render_node: Node3D = _load_glb_bundle(tr_path, cid + "_tr")
 	if render_node != null:
@@ -157,18 +119,18 @@ func _load_cell(meta: Dictionary) -> void:
 		cell_root.add_child(render_node)
 		any_loaded = true
 
-	# ── terrain collision (simplified mesh, NOT the full render mesh) ─────────
 	var tc_path: String = INDEX_ASSET_BASE + "/" + (meta["terrain_collision"] as String)
 	var col_node: Node3D = _load_glb_bundle(tc_path, cid + "_tc")
 	if col_node != null:
 		col_node.name = "terrain_collision"
 		col_node.visible = false
 		_collision_cells_loading += 1
-		_attach_trimesh_collision(col_node, cid)
+		_attach_trimesh_collision(col_node)
 		cell_root.add_child(col_node)
+		var ready_timer := get_tree().create_timer(0.0, true, true)
+		ready_timer.timeout.connect(_notify_collision_loaded.bind(cid), CONNECT_ONE_SHOT)
 		any_loaded = true
 
-	# ── buildings (array of paths) ────────────────────────────────────────────
 	var buildings: Array = meta.get("buildings", []) as Array
 	for i in range(buildings.size()):
 		var b_path: String = INDEX_ASSET_BASE + "/" + (buildings[i] as String)
@@ -187,7 +149,6 @@ func _load_cell(meta: Dictionary) -> void:
 	print("CELL_LOADED id=%s pos=%s" % [cid, cell_pos])
 	cell_loaded.emit(cid)
 
-
 func _unload_cell(cid: String) -> void:
 	if not _loaded_cells.has(cid):
 		return
@@ -196,33 +157,31 @@ func _unload_cell(cid: String) -> void:
 	print("CELL_UNLOADED id=%s" % cid)
 	cell_unloaded.emit(cid)
 
-
-## Attach StaticBody3D + trimesh CollisionShape3D to every MeshInstance3D
-## in the subtree, then defer a check for collision_ready.
-func _attach_trimesh_collision(node: Node, cell_id: String) -> void:
+func _attach_trimesh_collision(node: Node) -> void:
 	if node is MeshInstance3D:
 		var mi := node as MeshInstance3D
 		if mi.mesh != null:
 			var body := StaticBody3D.new()
 			body.name = "_TrimeshBody"
 			var col := CollisionShape3D.new()
-			col.shape = mi.mesh.create_trimesh_shape()
+			var terrain_shape := mi.mesh.create_trimesh_shape()
+			if terrain_shape is ConcavePolygonShape3D:
+				(terrain_shape as ConcavePolygonShape3D).backface_collision = true
+				print("COLLISION_BACKFACE_ENABLED mesh=%s" % mi.name)
+			col.shape = terrain_shape
 			body.add_child(col)
 			mi.add_child(body)
 	for child in node.get_children():
-		_attach_trimesh_collision(child, cell_id)
-	# Deferred so the StaticBody3D enters the physics world before we signal.
-	_notify_collision_loaded.call_deferred(cell_id)
+		_attach_trimesh_collision(child)
 
-
-func _notify_collision_loaded(_cell_id: String) -> void:
+func _notify_collision_loaded(cell_id: String) -> void:
 	_collision_cells_loading = maxi(_collision_cells_loading - 1, 0)
+	print("COLLISION_PHYSICS_READY cell=%s remaining=%d" % [cell_id, _collision_cells_loading])
 	if _collision_cells_loading == 0 and not _collision_ever_ready:
 		_collision_ever_ready = true
+		print("COLLISION_BATCH_READY")
 		collision_ready.emit()
 
-
-## Copy a .glbraw bundle to user:// as .glb and parse it.
 func _load_glb_bundle(bundle_path: String, runtime_name: String) -> Node3D:
 	if not FileAccess.file_exists(bundle_path):
 		return null
@@ -230,26 +189,22 @@ func _load_glb_bundle(bundle_path: String, runtime_name: String) -> Node3D:
 	if runtime_path.is_empty():
 		return null
 	var document := GLTFDocument.new()
-	var state    := GLTFState.new()
+	var state := GLTFState.new()
 	var err := document.append_from_file(runtime_path, state)
 	if err != OK:
 		push_error("WorldStreamingManager: GLB load failed %s err=%s" % [runtime_name, err])
 		return null
 	return document.generate_scene(state)
 
-
 func _copy_to_runtime(bundle_path: String, runtime_name: String) -> String:
 	var runtime_dir := "user://runtime_cells/_streaming"
-	DirAccess.make_dir_recursive_absolute(
-		ProjectSettings.globalize_path(runtime_dir))
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(runtime_dir))
 	var safe_name := runtime_name.replace("/", "_")
 	var runtime_path := runtime_dir + "/" + safe_name + ".glb"
-
 	var src := FileAccess.open(bundle_path, FileAccess.READ)
 	if src == null:
 		return ""
 	var source_size := src.get_length()
-
 	if FileAccess.file_exists(runtime_path):
 		var existing := FileAccess.open(runtime_path, FileAccess.READ)
 		if existing != null and existing.get_length() == source_size:
@@ -258,7 +213,6 @@ func _copy_to_runtime(bundle_path: String, runtime_name: String) -> String:
 			return ProjectSettings.globalize_path(runtime_path)
 		if existing != null:
 			existing.close()
-
 	var dst := FileAccess.open(runtime_path, FileAccess.WRITE)
 	if dst == null:
 		src.close()
@@ -270,7 +224,6 @@ func _copy_to_runtime(bundle_path: String, runtime_name: String) -> String:
 	src.close()
 	dst.close()
 	return ProjectSettings.globalize_path(runtime_path)
-
 
 func _disable_shadows(node: Node) -> void:
 	if node is MeshInstance3D:
