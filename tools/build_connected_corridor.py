@@ -74,6 +74,26 @@ def is_empty_lod2_result(output: str) -> bool:
     return NO_LOD2_SURFACES in output
 
 
+def is_nonempty_file(path: Path) -> bool:
+    """Only non-empty regular files are valid cache artifacts."""
+    return path.is_file() and path.stat().st_size > 0
+
+
+def promote_glb(glb_path: Path, raw_path: Path) -> None:
+    """Promote a valid .glb to .glbraw without clobbering a good cached .glbraw."""
+    if is_nonempty_file(raw_path):
+        if glb_path.exists():
+            glb_path.unlink()
+        return
+    if raw_path.exists():
+        raw_path.unlink()
+    if not is_nonempty_file(glb_path):
+        if glb_path.exists():
+            glb_path.unlink()
+        raise RuntimeError(f"Expected non-empty GLB output: {glb_path}")
+    glb_path.replace(raw_path)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", type=Path, default=Path("connected_world"))
@@ -109,7 +129,9 @@ def main() -> None:
             print(f"WARN no Dortmund LoD2 tile for {key}")
             continue
         target = lod_dir / f"lod2_{key[0]}_{key[1]}.gml"
-        if not target.exists() or target.stat().st_size == 0:
+        if not is_nonempty_file(target):
+            if target.exists():
+                target.unlink()
             target.write_bytes(req(cat[key]))
         tile_paths[key] = target
     index = {
@@ -132,23 +154,37 @@ def main() -> None:
         c_raw.mkdir(exist_ok=True)
         c_out.mkdir(exist_ok=True)
         dgm = c_raw / "dgm1.tif"
-        if not dgm.exists() or dgm.stat().st_size == 0:
+        if not is_nonempty_file(dgm):
+            if dgm.exists():
+                dgm.unlink()
             dgm.write_bytes(req(dgm_url(bbox)))
 
         tr_raw = c_out / "terrain_render.glbraw"
         tc_raw = c_out / "terrain_collision.glbraw"
+        tr_glb = c_out / "terrain_render.glb"
+        tc_glb = c_out / "terrain_collision.glb"
 
-        if not tr_raw.exists():
-            tr_glb = c_out / "terrain_render.glb"
-            if not tr_glb.exists():
+        if not is_nonempty_file(tr_raw):
+            if tr_raw.exists():
+                tr_raw.unlink()
+            if not is_nonempty_file(tr_glb):
+                if tr_glb.exists():
+                    tr_glb.unlink()
                 run([py, "tools/build_terrain.py", str(dgm), "--cell", str(spec_path), "--out", str(tr_glb), "--step", "4", "--vertical-origin", str(VERTICAL_ORIGIN)])
-            tr_glb.rename(tr_raw)
+            promote_glb(tr_glb, tr_raw)
+        elif tr_glb.exists():
+            tr_glb.unlink()
 
-        if not tc_raw.exists():
-            tc_glb = c_out / "terrain_collision.glb"
-            if not tc_glb.exists():
+        if not is_nonempty_file(tc_raw):
+            if tc_raw.exists():
+                tc_raw.unlink()
+            if not is_nonempty_file(tc_glb):
+                if tc_glb.exists():
+                    tc_glb.unlink()
                 run([py, "tools/build_terrain.py", str(dgm), "--cell", str(spec_path), "--out", str(tc_glb), "--step", "8", "--vertical-origin", str(VERTICAL_ORIGIN)])
-            tc_glb.rename(tc_raw)
+            promote_glb(tc_glb, tc_raw)
+        elif tc_glb.exists():
+            tc_glb.unlink()
 
         building_files = []
         for ti, key in enumerate(ts):
@@ -157,21 +193,35 @@ def main() -> None:
                 continue
             dst_raw = c_out / f"buildings_{ti}.glbraw"
             dst_glb = c_out / f"buildings_{ti}.glb"
-            if dst_raw.exists():
-                building_files.append(dst_raw.name)
-            else:
-                proc = subprocess.run([py, "tools/citygml_to_glb.py", str(src), "--cell", str(spec_path), "--out", str(dst_glb), "--vertical-origin", str(VERTICAL_ORIGIN)], text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-                print(proc.stdout)
-                if proc.returncode != 0:
-                    if is_empty_lod2_result(proc.stdout):
-                        print(f"INFO no LoD2 surfaces for tile {key} in cell {cid}; continuing with no building mesh", flush=True)
-                        if dst_glb.exists():
-                            dst_glb.unlink()
-                        continue
-                    raise RuntimeError(f"citygml_to_glb failed for tile {key} in cell {cid}:\n{proc.stdout}")
+            if is_nonempty_file(dst_raw):
                 if dst_glb.exists():
-                    dst_glb.rename(dst_raw)
-                    building_files.append(dst_raw.name)
+                    dst_glb.unlink()
+                building_files.append(dst_raw.name)
+                continue
+            if dst_raw.exists():
+                dst_raw.unlink()
+            if is_nonempty_file(dst_glb):
+                promote_glb(dst_glb, dst_raw)
+                building_files.append(dst_raw.name)
+                continue
+            if dst_glb.exists():
+                dst_glb.unlink()
+
+            proc = subprocess.run([py, "tools/citygml_to_glb.py", str(src), "--cell", str(spec_path), "--out", str(dst_glb), "--vertical-origin", str(VERTICAL_ORIGIN)], text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            print(proc.stdout)
+            if proc.returncode != 0:
+                if is_empty_lod2_result(proc.stdout):
+                    print(f"INFO no LoD2 surfaces for tile {key} in cell {cid}; continuing with no building mesh", flush=True)
+                    if dst_glb.exists():
+                        dst_glb.unlink()
+                    continue
+                raise RuntimeError(f"citygml_to_glb failed for tile {key} in cell {cid}:\n{proc.stdout}")
+            if not is_nonempty_file(dst_glb):
+                if dst_glb.exists():
+                    dst_glb.unlink()
+                raise RuntimeError(f"citygml_to_glb succeeded but produced no valid output for tile {key} in cell {cid}")
+            promote_glb(dst_glb, dst_raw)
+            building_files.append(dst_raw.name)
 
         index["cells"].append({
             "id": cid,
@@ -182,7 +232,15 @@ def main() -> None:
             "buildings": [f"{cid}/{x}" for x in building_files]
         })
     for p in derived.rglob("*.glb"):
-        p.rename(p.with_suffix(".glbraw"))
+        raw_path = p.with_suffix(".glbraw")
+        if is_nonempty_file(raw_path):
+            p.unlink(missing_ok=True)
+        elif is_nonempty_file(p):
+            promote_glb(p, raw_path)
+        else:
+            p.unlink(missing_ok=True)
+            if raw_path.exists() and not is_nonempty_file(raw_path):
+                raw_path.unlink()
     (derived / "index.json").write_text(json.dumps(index, indent=2) + "\n", encoding="utf-8")
     print(f"BUILT {len(index['cells'])} connected cells")
 
