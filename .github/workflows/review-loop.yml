@@ -1,14 +1,11 @@
 name: Review loop orchestrator
 
 # Current review state machine (GitHub Models was retired on 2026-07-30):
-#   CI_GREEN -> COPILOT_REVIEW_REQUESTED -> SUPERVISOR_REQUIRED
+#   CI_GREEN_PENDING | CI_GREEN -> COPILOT_REVIEW_REQUESTED -> SUPERVISOR_REQUIRED
+#   hard CI/review orchestration failure -> REWORK
 #
 # Copilot code review is a COMMENT review, not an approval. This workflow never
 # auto-merges and never pretends that a Copilot comment is a human approval.
-#
-# Trigger:
-#   - workflow_dispatch with a PR number
-#   - add the label "review-loop" to an open PR
 
 on:
   workflow_dispatch:
@@ -59,32 +56,46 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ needs.gate-label.outputs.pr_number }}
+          CURRENT_WORKFLOW: ${{ github.workflow }}
         run: |
           set -euo pipefail
-          # Do not count this review-loop workflow against itself. gh pr checks
-          # exposes a normalized bucket: pass/fail/pending/skipping/cancel.
           gh pr checks "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
             --json name,state,workflow,bucket > /tmp/checks.json
-          BAD=$(python3 - <<'PY'
-          import json
+          RESULT=$(python3 - <<'PY'
+          import json, os
           checks=json.load(open('/tmp/checks.json'))
-          bad=[]
+          current=os.environ.get('CURRENT_WORKFLOW','')
+          hard=[]
+          pending=[]
           for c in checks:
-              if c.get('workflow') == 'Review loop orchestrator':
+              if c.get('workflow') == current:
                   continue
-              if c.get('bucket') in {'fail','pending','cancel'}:
-                  bad.append(f"{c.get('workflow','?')}::{c.get('name','?')}::{c.get('bucket','?')}")
-          print(len(bad))
-          open('/tmp/bad-checks.txt','w').write('\n'.join(bad))
+              bucket=c.get('bucket')
+              label=f"{c.get('workflow','?')}::{c.get('name','?')}::{bucket or '?'}"
+              if bucket in {'fail','cancel'}:
+                  hard.append(label)
+              elif bucket == 'pending':
+                  pending.append(label)
+          open('/tmp/hard-checks.txt','w').write('\n'.join(hard))
+          open('/tmp/pending-checks.txt','w').write('\n'.join(pending))
+          if hard:
+              print(f"REWORK:{len(hard)}")
+          elif pending:
+              print(f"CI_GREEN_PENDING:{len(pending)}")
+          else:
+              print('CI_GREEN:0')
           PY
           )
-          echo "bad_checks=$BAD" >> "$GITHUB_OUTPUT"
-          if [ "$BAD" != "0" ]; then
-            echo "::warning::$BAD external check(s) are not green"
-            cat /tmp/bad-checks.txt || true
-            echo "state=CI_GREEN_PENDING" >> "$GITHUB_OUTPUT"
-          else
-            echo "state=CI_GREEN" >> "$GITHUB_OUTPUT"
+          STATE=${RESULT%%:*}
+          COUNT=${RESULT##*:}
+          echo "state=$STATE" >> "$GITHUB_OUTPUT"
+          echo "bad_checks=$COUNT" >> "$GITHUB_OUTPUT"
+          if [ "$STATE" = "REWORK" ]; then
+            echo "::error::$COUNT external check(s) failed/cancelled"
+            cat /tmp/hard-checks.txt || true
+          elif [ "$STATE" = "CI_GREEN_PENDING" ]; then
+            echo "::notice::$COUNT external check(s) still pending"
+            cat /tmp/pending-checks.txt || true
           fi
 
   request-copilot-review:
@@ -127,7 +138,9 @@ jobs:
           REVIEW_RESULT: ${{ needs.request-copilot-review.result }}
           REVIEW_OUTCOME: ${{ needs.request-copilot-review.outputs.outcome }}
         run: |
-          if [ "$CI_STATE" = "CI_GREEN" ] && [ "$REVIEW_RESULT" = "success" ] && [ "$REVIEW_OUTCOME" = "COPILOT_REVIEW_REQUESTED" ]; then
+          if [ "$CI_STATE" = "CI_GREEN_PENDING" ]; then
+            echo "final=CI_GREEN_PENDING" >> "$GITHUB_OUTPUT"
+          elif [ "$CI_STATE" = "CI_GREEN" ] && [ "$REVIEW_RESULT" = "success" ] && [ "$REVIEW_OUTCOME" = "COPILOT_REVIEW_REQUESTED" ]; then
             echo "final=SUPERVISOR_REQUIRED" >> "$GITHUB_OUTPUT"
           else
             echo "final=REWORK" >> "$GITHUB_OUTPUT"
@@ -138,6 +151,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh label create "supervisor-required" --color "1d76db" --description "Copilot review requested; supervisor decision pending" --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
+          gh label create "ci-pending" --color "fbca04" --description "External CI is still running" --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
           gh label create "rework" --color "e11d48" --description "CI or review orchestration requires rework" --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
 
       - name: Apply state label
@@ -146,13 +160,20 @@ jobs:
           PR_NUMBER: ${{ needs.gate-label.outputs.pr_number }}
           FINAL: ${{ steps.state.outputs.final }}
         run: |
-          if [ "$FINAL" = "SUPERVISOR_REQUIRED" ]; then
-            gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --add-label "supervisor-required" --remove-label "rework" 2>/dev/null || \
-              gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --add-label "supervisor-required"
-          else
-            gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --add-label "rework" --remove-label "supervisor-required" 2>/dev/null || \
-              gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --add-label "rework"
-          fi
+          case "$FINAL" in
+            SUPERVISOR_REQUIRED)
+              gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --add-label "supervisor-required" --remove-label "rework" --remove-label "ci-pending" 2>/dev/null || \
+                gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --add-label "supervisor-required"
+              ;;
+            CI_GREEN_PENDING)
+              gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --add-label "ci-pending" --remove-label "rework" --remove-label "supervisor-required" 2>/dev/null || \
+                gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --add-label "ci-pending"
+              ;;
+            *)
+              gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --add-label "rework" --remove-label "supervisor-required" --remove-label "ci-pending" 2>/dev/null || \
+                gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --add-label "rework"
+              ;;
+          esac
 
       - name: Post supervisor handoff
         env:
@@ -162,5 +183,5 @@ jobs:
           CI_STATE: ${{ needs.ci-green-check.outputs.state }}
           REVIEW_OUTCOME: ${{ needs.request-copilot-review.outputs.outcome }}
         run: |
-          BODY="### Review-loop v2\n\n| Gate | State |\n|---|---|\n| External CI | \`$CI_STATE\` |\n| Copilot code review | \`${REVIEW_OUTCOME:-NOT_REQUESTED}\` |\n| **Current state** | **\`$FINAL\`** |\n\n\`CI_GREEN → COPILOT_REVIEW_REQUESTED → SUPERVISOR_REQUIRED\`\n\nCopilot code review is advisory and does not count as an approval. No auto-merge occurs.\n\n---\nRun: [$GITHUB_RUN_ID]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)"
+          BODY="### Review-loop v2\n\n| Gate | State |\n|---|---|\n| External CI | \`$CI_STATE\` |\n| Copilot code review | \`${REVIEW_OUTCOME:-NOT_REQUESTED}\` |\n| **Current state** | **\`$FINAL\`** |\n\n\`CI_GREEN_PENDING | CI_GREEN → COPILOT_REVIEW_REQUESTED → SUPERVISOR_REQUIRED\`\n\nCopilot code review is advisory and does not count as an approval. No auto-merge occurs.\n\n---\nRun: [$GITHUB_RUN_ID]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)"
           gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$BODY"
