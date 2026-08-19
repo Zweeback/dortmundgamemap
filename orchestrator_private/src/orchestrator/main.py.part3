@@ -1,0 +1,300 @@
+            )
+            state.state = "deferred"
+            state.error = reason
+            state.updated_at = utcnow()
+            write_job_state(state)
+            mark_retry_scheduled(current, reason)
+            await _emit({"type": "job.deferred", "job_id": job_id, "reason": reason})
+            return
+
+        remove_deferred_entry(job_id)
+        sm.transition_to(
+            "running",
+            reason="Resources available on retry",
+            owner=ctx["owner"],
+            lease_id=ctx["lease_id"],
+        )
+        _sync_state_lease(state, ctx)
+        state.state = "running"
+        state.updated_at = utcnow()
+        state.error = None
+        write_job_state(state)
+        await _emit({
+            "type": "job.started",
+            "job_id": job_id,
+            "target": cmd.target,
+            "command_type": cmd.command_type,
+        })
+        await execute_admitted_job(cmd, job_id, sm, state, ctx)
+    finally:
+        maintenance.cancel()
+        try:
+            await maintenance
+        except asyncio.CancelledError:
+            pass
+
+
+async def run_job(cmd: BridgeCommand, job_id: str, ctx: dict[str, Any]) -> None:
+    maintenance = asyncio.create_task(_lease_maintenance_loop(job_id, ctx))
+    try:
+        state = load_job_state(job_id)
+        _sync_state_lease(state, ctx)
+        sm = JobStateMachine(job_id, initial_state="accepted")
+        try:
+            sm.transition_to(
+                "validating",
+                reason="Checking capability registration and payload",
+                owner=ctx["owner"],
+                lease_id=ctx["lease_id"],
+            )
+            state.state = "validating"
+            state.updated_at = utcnow()
+            write_job_state(state)
+        except Exception as exc:
+            log.error("Failed state transition for %s: %s", job_id, exc)
+            return
+
+        await _emit({
+            "type": "job.validating",
+            "job_id": job_id,
+            "target": cmd.target,
+            "command_type": cmd.command_type,
+        })
+
+        errors: list[str] = []
+        if "llm_raw_text" in cmd.payload:
+            raw_text = cmd.payload["llm_raw_text"]
+            try:
+                parsed_json = json.loads(raw_text)
+                validated_output = LLMOutputModel(**parsed_json)
+                cmd.payload.clear()
+                cmd.payload.update(validated_output.model_dump())
+            except Exception as exc:
+                validation_error = f"failed_validation: {exc}"
+                errors.append(validation_error)
+                await _emit({
+                    "type": "failed_validation",
+                    "job_id": job_id,
+                    "error": validation_error,
+                })
+
+        if not errors and not cmd.dry_run:
+            from orchestrator.resource_manager import admit_job_with_recovery
+
+            await _emit({"type": "job.admission_check", "job_id": job_id, "target": cmd.target})
+            model_name = os.getenv("OLLAMA_RECOVERY_MODEL", "gemma4")
+            admitted, reason, ollama_unloaded = await admit_job_with_recovery(
+                cmd.target, cmd.command_type, model_name=model_name
+            )
+            if ollama_unloaded and admitted:
+                await _emit({
+                    "type": "job.ollama_unloaded",
+                    "job_id": job_id,
+                    "detail": f"Unloaded {model_name} model to satisfy job VRAM requirements",
+                })
+            if not admitted:
+                errors.append(reason)
+
+        _sync_state_lease(state, ctx)
+        if not errors:
+            sm.transition_to(
+                "ready",
+                reason="Capability verified",
+                owner=ctx["owner"],
+                lease_id=ctx["lease_id"],
+            )
+            state.state = "ready"
+            state.updated_at = utcnow()
+            write_job_state(state)
+
+            sm.transition_to(
+                "running",
+                reason="Running background worker",
+                owner=ctx["owner"],
+                lease_id=ctx["lease_id"],
+            )
+            _sync_state_lease(state, ctx)
+            state.state = "running"
+            state.updated_at = utcnow()
+            write_job_state(state)
+            await _emit({
+                "type": "job.started",
+                "job_id": job_id,
+                "target": cmd.target,
+                "command_type": cmd.command_type,
+            })
+        else:
+            error_text = "; ".join(errors)
+            if _is_resource_defer_error(errors):
+                from orchestrator.deferred_queue import enqueue_deferred_job
+
+                sm.transition_to(
+                    "deferred",
+                    reason=error_text,
+                    owner=ctx["owner"],
+                    lease_id=ctx["lease_id"],
+                )
+                state.state = "deferred"
+                state.updated_at = utcnow()
+                state.error = error_text
+                write_job_state(state)
+                enqueue_deferred_job(job_id, cmd.model_dump(), errors[0])
+                await _emit({"type": "job.deferred", "job_id": job_id, "reason": error_text})
+                return
+
+            sm.transition_to(
+                "failed",
+                reason=error_text,
+                owner=ctx["owner"],
+                lease_id=ctx["lease_id"],
+            )
+            state.state = "failed"
+            state.updated_at = utcnow()
+            state.error = error_text
+            write_job_state(state)
+            await _emit({"type": "job.failed", "job_id": job_id, "error": state.error})
+            return
+
+        await execute_admitted_job(cmd, job_id, sm, state, ctx)
+    finally:
+        maintenance.cancel()
+        try:
+            await maintenance
+        except asyncio.CancelledError:
+            pass
+
+_scheduler_task: asyncio.Task | None = None
+_sweeper_task: asyncio.Task | None = None
+_verification_task: asyncio.Task | None = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global _scheduler_task, _sweeper_task, _verification_task
+    from orchestrator.retry_scheduler import retry_scheduler_loop
+
+    # Patch 1 deliberately enforces a single gateway process per JOBS_DIR.
+    # The OS-managed lock is held for the whole process lifetime; a second
+    # Uvicorn/Gunicorn worker fails startup instead of racing the sweeper.
+    try:
+        process_lock.acquire()
+    except ProcessLockError as exc:
+        raise RuntimeError(
+            "another gateway instance already owns the process/sweeper lock; "
+            "multi-worker mode is forbidden for Patch 1"
+        ) from exc
+
+    append_event({
+        "type": "service.started",
+        "service": settings.app_name,
+        "instance_id": settings.instance_id,
+        "process_lock": str(PROCESS_LOCK_PATH),
+    })
+
+    try:
+        # Immediate cold-start recovery occurs only after exclusive ownership.
+        for event in lease_manager.sweep_once():
+            await _emit(event)
+        for event in await asyncio.to_thread(artifact_verifier.process_pending_once):
+            await _emit(event)
+        _sweeper_task = asyncio.create_task(_lease_sweeper_loop(), name="lease-sweeper")
+        _verification_task = asyncio.create_task(
+            _verification_sweeper_loop(),
+            name="artifact-verification-sweeper",
+        )
+
+        if os.environ.get("DISABLE_DEFERRED_SCHEDULER", "").lower() not in ("true", "1", "yes"):
+            if "pytest" not in sys.modules:
+                _scheduler_task = asyncio.create_task(
+                    retry_scheduler_loop(retry_deferred_entry),
+                    name="deferred-retry-scheduler",
+                )
+        yield
+    finally:
+        for task in (_scheduler_task, _sweeper_task, _verification_task):
+            if task:
+                task.cancel()
+        for task in (_scheduler_task, _sweeper_task, _verification_task):
+            if task:
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+        append_event({
+            "type": "service.stopped",
+            "service": settings.app_name,
+            "instance_id": settings.instance_id,
+        })
+        process_lock.release()
+
+app = FastAPI(title=settings.app_name, version=settings.app_version, lifespan=lifespan)
+
+@app.get("/health")
+async def health() -> dict[str, Any]:
+    caps = load_capabilities()
+    return {
+        "ok": True,
+        "status": "ok",
+        "subsystem": settings.app_name,
+        "operational_status": "ok",
+        "legacy_status": "operational",
+        "service": settings.app_name,
+        "version": settings.app_version,
+        "time_utc": utcnow(),
+        "capabilities": len(caps),
+        "capabilities_total": len(caps),
+        "capabilities_healthy": len(caps),
+        "queue_depth": queue_depth(),
+        "instance_id": settings.instance_id,
+        "lease_seconds": settings.lease_seconds,
+        "heartbeat_timeout_seconds": settings.heartbeat_timeout_seconds,
+        "max_active_state_seconds": settings.max_active_state_seconds,
+        "lease_sweeper_interval_seconds": settings.sweeper_interval_seconds,
+        "verification_ttl_seconds": settings.verification_ttl_seconds,
+        "verification_sweeper_interval_seconds": settings.verification_sweeper_interval_seconds,
+        "gateway_process_lock_acquired": process_lock.acquired,
+        "event_stream_delivery": "best_effort_websocket_repoll_state_after_reconnect",
+    }
+
+@app.get("/capabilities")
+async def capabilities() -> list[dict[str, Any]]:
+    return load_capabilities()
+
+@app.get("/events")
+async def list_events(limit: int = 100) -> list[dict[str, Any]]:
+    events_file = EVENTS_DIR / "events.jsonl"
+    if not events_file.exists():
+        return []
+
+    with open(events_file, "r", encoding="utf-8") as f:
+        lines = [line.strip() for line in f.readlines() if line.strip()]
+
+    events: list[dict[str, Any]] = []
+    for line in lines[-max(1, min(limit, 1000)):]:
+        event = json.loads(line)
+        data = event.get("data")
+        if "type" not in event:
+            if isinstance(data, dict) and "type" in data:
+                event["type"] = data["type"]
+            elif "event" in event:
+                event["type"] = event["event"]
+        if "event" not in event and "type" in event:
+            event["event"] = event["type"]
+        events.append(event)
+    return events
+
+@app.post("/command")
+async def legacy_command(
+    cmd: LegacyCommand,
+    x_bridge_token: str = Header(..., alias="X-Bridge-Token"),
+) -> dict[str, Any]:
+    _require_bridge_token(x_bridge_token)
+    if cmd.schema_version != "1.0.0":
+        raise HTTPException(status_code=400, detail="Invalid schema version")
+    if cmd.target not in {"unity", "blender", "meshroom", "github"}:
+        raise HTTPException(status_code=400, detail="Unsupported target")
+
+    append_event({
+        "type": "legacy.command.received",
+        "event": "CommandReceived",
+        "command_id": cmd.command_id,

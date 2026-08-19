@@ -1,0 +1,280 @@
+from __future__ import annotations
+
+import os
+import sys
+import uuid
+import json
+import logging
+import asyncio
+import hmac
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Dict, Any, List, Literal, Optional
+
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, BackgroundTasks, Header
+from pydantic import BaseModel, Field
+
+# Setup path to allow importing sibling packages (blender, meshroom)
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+
+from blender.blender_runner import run_blender_command
+from meshroom.meshroom_wrapper import run_meshroom_pipeline
+from orchestrator.state_machine import JobStateMachine, OWNED_STATES
+from orchestrator.lease_manager import LeaseManager, LeaseConfig, LeaseError, parse_utc, utcnow_dt
+from orchestrator.process_lock import ProcessExclusiveLock, ProcessLockError
+from orchestrator.artifact_verifier import (
+    ArtifactVerifier,
+    VerificationConfig,
+    VerificationError,
+)
+from orchestrator.capabilities import CapabilityRegistry
+from orchestrator.provenance import generate_provenance
+from orchestrator.event_logger import log_event
+from orchestrator.deferred_queue import queue_depth
+
+BASE_DIR = Path(parent_dir)
+ARTIFACTS_DIR = BASE_DIR / "artifacts"
+EVENTS_DIR = ARTIFACTS_DIR / "events"
+JOBS_DIR = ARTIFACTS_DIR / "jobs"
+
+EVENTS_DIR.mkdir(parents=True, exist_ok=True)
+JOBS_DIR.mkdir(parents=True, exist_ok=True)
+
+# Initialize logger
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+log = logging.getLogger("anti-gravity-bridge")
+
+class Settings:
+    def __init__(self) -> None:
+        self.app_name = "anti-gravity-bridge"
+        self.app_version = "0.3.0-completion-verification"
+        self.bridge_token = os.getenv("BRIDGE_TOKEN", "")
+        if not self.bridge_token:
+            raise RuntimeError("BRIDGE_TOKEN is required; refusing insecure startup")
+        self.lease_hmac_secret = os.getenv("LEASE_HMAC_SECRET", "")
+        if not self.lease_hmac_secret:
+            raise RuntimeError("LEASE_HMAC_SECRET is required; refusing shared-secret lease tokens")
+        self.capabilities_dir = BASE_DIR / "capabilities"
+        self.lease_seconds = int(os.getenv("LEASE_SECONDS", "600"))
+        self.heartbeat_timeout_seconds = int(os.getenv("HEARTBEAT_TIMEOUT_SECONDS", "120"))
+        self.max_active_state_seconds = int(os.getenv("MAX_ACTIVE_STATE_SECONDS", "1800"))
+        self.heartbeat_interval_seconds = float(os.getenv("HEARTBEAT_INTERVAL_SECONDS", "30"))
+        self.sweeper_interval_seconds = float(os.getenv("LEASE_SWEEPER_INTERVAL_SECONDS", "5"))
+        self.verification_ttl_seconds = int(os.getenv("VERIFICATION_TTL_SECONDS", "120"))
+        self.verification_sweeper_interval_seconds = float(os.getenv("VERIFICATION_SWEEPER_INTERVAL_SECONDS", "2"))
+        self.instance_id = os.getenv("BRIDGE_INSTANCE_ID") or f"inst_{uuid.uuid4().hex[:12]}"
+
+settings = Settings()
+registry = CapabilityRegistry(capabilities_dir=str(settings.capabilities_dir))
+lease_manager = LeaseManager(
+    JOBS_DIR,
+    token_secret=settings.lease_hmac_secret,
+    supervisor_instance_id=settings.instance_id,
+    config=LeaseConfig(
+        default_lease_seconds=settings.lease_seconds,
+        heartbeat_timeout_seconds=settings.heartbeat_timeout_seconds,
+        max_active_state_seconds=settings.max_active_state_seconds,
+    ),
+)
+LOCAL_OWNER = lease_manager.local_owner
+artifact_verifier = ArtifactVerifier(
+    BASE_DIR,
+    JOBS_DIR,
+    config=VerificationConfig(verification_ttl_seconds=settings.verification_ttl_seconds),
+)
+PROCESS_LOCK_PATH = ARTIFACTS_DIR / "gateway-process.lock"
+process_lock = ProcessExclusiveLock(PROCESS_LOCK_PATH, holder=settings.instance_id)
+
+class BridgeCommand(BaseModel):
+    schema_version: Literal["bridge.command.v1"] = "bridge.command.v1"
+    command_id: str = Field(default_factory=lambda: f"cmd_{uuid.uuid4().hex[:12]}")
+    mission_id: str | None = None
+    job_id: str | None = None
+    command_type: str
+    target: Literal["unity", "blender", "meshroom", "github"]
+    dry_run: bool = False
+    priority: int = Field(default=50, ge=0, le=100)
+    payload: Dict[str, Any]
+    constraints: Dict[str, Any] = Field(default_factory=dict)
+    provenance: Dict[str, Any] = Field(default_factory=dict)
+
+class LegacyCommand(BaseModel):
+    schema_version: str
+    command_id: str
+    target: str
+    action: str
+    payload: Dict[str, Any] = Field(default_factory=dict)
+
+class LegacyJobRequest(BaseModel):
+    job_type: str
+    payload: Dict[str, Any] = Field(default_factory=dict)
+
+class JobState(BaseModel):
+    job_id: str
+    command_id: str
+    correlation_id: str | None = None
+    target: str
+    command_type: str
+    state: Literal[
+        "queued", "accepted", "validating", "ready", "running", "verifying",
+        "succeeded", "completed", "verification_rejected", "failed",
+        "deferred", "retrying", "orphaned"
+    ]
+    created_at: str
+    updated_at: str
+    dry_run: bool
+    owner: str | None = None
+    worker_type: str | None = None
+    lease_id: str | None = None
+    lease_generation: int = 0
+    lease_seconds: int | None = None
+    lease_expires_at: str | None = None
+    last_heartbeat_at: str | None = None
+    state_entered_at: str | None = None
+    max_active_state_seconds: int | None = None
+    artifacts: List[str] = Field(default_factory=list)
+    artifact_contract: Dict[str, Any] | None = None
+    expected_artifact_contract_hash: str | None = None
+    completion_claimed_by: str | None = None
+    completion_claimed_lease_id: str | None = None
+    claimed_contract_hash: str | None = None
+    claimed_artifacts: List[Dict[str, Any]] = Field(default_factory=list)
+    verification_started_at: str | None = None
+    verification_deadline_at: str | None = None
+    verification_ttl_seconds: int | None = None
+    verification_completed_at: str | None = None
+    verification_errors: List[str] = Field(default_factory=list)
+    verified_artifacts: List[Dict[str, Any]] = Field(default_factory=list)
+    error: str | None = None
+
+
+class LeaseClaimRequest(BaseModel):
+    owner: str
+    worker_type: str
+    lease_seconds: int | None = Field(default=None, gt=0)
+
+
+class LeaseMutationRequest(BaseModel):
+    owner: str
+    lease_id: str
+
+
+class ArtifactClaim(BaseModel):
+    path: str
+    size_bytes: int
+    sha256: str
+
+
+class CompletionClaimRequest(LeaseMutationRequest):
+    contract_hash: str
+    artifacts: List[ArtifactClaim]
+
+
+class LLMOutputModel(BaseModel):
+    command: str
+    scale: List[float] = Field(default_factory=lambda: [1.0, 1.0, 1.0])
+    radius: float = 1.0
+    output_path: str = ""
+
+class EventBus:
+    def __init__(self) -> None:
+        self.clients: set[WebSocket] = set()
+
+    async def broadcast(self, event: dict[str, Any]) -> None:
+        dead = []
+        for ws in self.clients:
+            try:
+                await ws.send_json(event)
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            self.clients.discard(ws)
+
+bus = EventBus()
+
+def utcnow() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+def append_event(event: dict[str, Any]) -> None:
+    event["time_utc"] = utcnow()
+    log_event(event.get("type", "generic_event"), event)
+
+
+def _require_bridge_token(x_bridge_token: str) -> None:
+    if not hmac.compare_digest(x_bridge_token, settings.bridge_token):
+        raise HTTPException(status_code=401, detail="invalid bridge token")
+
+
+def _lease_token_for(record: dict[str, Any]) -> str:
+    return lease_manager.issue_lease_token(
+        record["job_id"],
+        owner=record["owner"],
+        lease_id=record["lease_id"],
+        generation=int(record.get("lease_generation", 0)),
+    )
+
+
+def _verify_presented_lease_token(job_id: str, body: LeaseMutationRequest, token: str) -> dict[str, Any]:
+    record = lease_manager.load(job_id)
+    generation = int(record.get("lease_generation", 0))
+    if not lease_manager.verify_lease_token(
+        token,
+        job_id=job_id,
+        owner=body.owner,
+        lease_id=body.lease_id,
+        generation=generation,
+    ):
+        raise HTTPException(status_code=401, detail="invalid lease-bound token")
+    try:
+        return lease_manager.validate(job_id, owner=body.owner, lease_id=body.lease_id)
+    except LeaseError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+def _sync_state_lease(state: JobState, ctx: dict[str, Any]) -> None:
+    state.owner = ctx["owner"]
+    state.worker_type = ctx.get("worker_type")
+    state.lease_id = ctx["lease_id"]
+    state.lease_generation = int(ctx.get("lease_generation", 0))
+    state.lease_seconds = int(ctx.get("lease_seconds") or settings.lease_seconds)
+    state.lease_expires_at = ctx.get("lease_expires_at")
+    state.last_heartbeat_at = ctx.get("last_heartbeat_at")
+    state.max_active_state_seconds = int(ctx.get("max_active_state_seconds") or settings.max_active_state_seconds)
+
+
+def load_job_state(job_id: str) -> JobState:
+    path = JOBS_DIR / job_id / "job_state.json"
+    if not path.exists():
+        raise LeaseError(f"job not found: {job_id}")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["state"] = data.get("current_state", data.get("state"))
+    return JobState(**data)
+
+
+def write_job_state(state: JobState, *, authority: str = "worker") -> None:
+    job_dir = JOBS_DIR / state.job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+    path = job_dir / "job_state.json"
+
+    existing: dict[str, Any] = {}
+    if path.exists():
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            existing = {}
+
+    if state.state == "orphaned" and authority != "sweeper":
+        raise PermissionError("only the lease sweeper may persist orphaned state")
+    if state.state in {"succeeded", "verification_rejected"} and authority != "verifier":
+        raise PermissionError("only the artifact verifier may persist completion-final states")
+
+    existing_state = existing.get("current_state", existing.get("state"))
+    if authority not in {"sweeper", "verifier"} and existing and (existing_state in OWNED_STATES or state.state in OWNED_STATES):
+        if not state.owner or not state.lease_id:
+            raise PermissionError("owner + current lease_id required for active job mutation")
+        lease_manager.validate(state.job_id, owner=state.owner, lease_id=state.lease_id)
+
