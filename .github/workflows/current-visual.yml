@@ -1,0 +1,95 @@
+name: Current visual
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - "infra/current-visual"
+    paths:
+      - "scenes/**"
+      - "scripts/**"
+      - "tools/capture_current_visual.gd"
+      - "project.godot"
+      - ".github/workflows/current-visual.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: current-visual-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GODOT_VERSION: "4.7.1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Godot and display dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+          curl -L --fail --retry 3 -o /tmp/godot.zip "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          unzip -q /tmp/godot.zip -d /tmp/godot
+          chmod +x "/tmp/godot/Godot_v${GODOT_VERSION}-stable_linux.x86_64"
+      - name: Import project
+        run: |
+          timeout 90s "/tmp/godot/Godot_v${GODOT_VERSION}-stable_linux.x86_64" --headless --path . --import
+      - name: Capture canonical scene
+        run: |
+          set -o pipefail
+          xvfb-run -a timeout 90s "/tmp/godot/Godot_v${GODOT_VERSION}-stable_linux.x86_64" \
+            --path . \
+            --rendering-method gl_compatibility \
+            --resolution 1600x900 \
+            --script res://tools/capture_current_visual.gd 2>&1 | tee current-visual.log
+          test -s docs/status/current.png
+          file docs/status/current.png
+      - name: Write capture metadata
+        env:
+          REPOSITORY: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from datetime import datetime, timezone
+          data = {
+              "repository": os.environ["REPOSITORY"],
+              "commit_sha": os.environ["COMMIT_SHA"],
+              "captured_at": datetime.now(timezone.utc).isoformat(),
+              "kind": "godot",
+              "target": "application/run/main_scene",
+              "workflow_run": os.environ["RUN_ID"],
+              "generator_version": "current-visual-v1",
+              "automated": True,
+          }
+          with open("docs/status/current.json", "w", encoding="utf-8") as handle:
+              json.dump(data, handle, indent=2)
+              handle.write("\n")
+          PY
+      - name: Commit accepted visual to capture branch
+        if: github.event_name == 'push'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- docs/status/current.png docs/status/current.json
+          if git diff --cached --quiet; then
+            echo "Visual evidence unchanged."
+          else
+            git commit -m "docs: refresh current runtime visual"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
+      - name: Upload visual evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: current-visual
+          path: |
+            docs/status/current.png
+            docs/status/current.json
+            current-visual.log
+          if-no-files-found: error
+          retention-days: 14

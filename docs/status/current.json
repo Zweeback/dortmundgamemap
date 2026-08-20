@@ -1,0 +1,10 @@
+{
+  "repository": "Zweeback/dortmundgamemap",
+  "commit_sha": "5264f5b4c378b5d0f61a3a2af96a372d428c5831",
+  "captured_at": "2026-08-20T02:46:27.227497+00:00",
+  "kind": "godot",
+  "target": "application/run/main_scene",
+  "workflow_run": "32325799807",
+  "generator_version": "current-visual-v1",
+  "automated": true
+}

@@ -94,6 +94,22 @@ func load_index() -> bool:
 	return true
 
 
+## Return true only when the repository actually contains visible assets
+## referenced by the index. An index without its GLB bundles is metadata, not
+## a renderable world, and main.gd must retain its visible fallback in that case.
+func has_packaged_render_assets() -> bool:
+	for meta: Dictionary in _cells_meta:
+		var terrain_path: String = INDEX_ASSET_BASE + "/" + (meta.get("terrain_render", "") as String)
+		if not terrain_path.ends_with("/") and FileAccess.file_exists(terrain_path):
+			return true
+		var buildings: Array = meta.get("buildings", []) as Array
+		for building: Variant in buildings:
+			var building_path: String = INDEX_ASSET_BASE + "/" + (building as String)
+			if FileAccess.file_exists(building_path):
+				return true
+	return false
+
+
 ## Convert UTM easting/northing to Godot XZ (y=0 plane).
 func utm_to_godot_xz(easting: float, northing: float) -> Vector2:
 	return Vector2(easting - _world_origin.x, -(northing - _world_origin.z))
