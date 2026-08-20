@@ -1,13 +1,13 @@
 extends SceneTree
 
-const OUTPUT_PATH := "res://docs/status/current.png"
+const OUTPUT_RELATIVE_PATH := "docs/status/current.png"
 const WARMUP_FRAMES := 90
 
 func _initialize() -> void:
     call_deferred("_capture")
 
 func _capture() -> void:
-    var scene_path := ProjectSettings.get_setting("application/run/main_scene", "")
+    var scene_path: String = ProjectSettings.get_setting("application/run/main_scene", "")
     if scene_path.is_empty():
         push_error("application/run/main_scene is not configured")
         quit(2)
@@ -32,12 +32,13 @@ func _capture() -> void:
         return
 
     image.resize(1600, 900, Image.INTERPOLATE_LANCZOS)
-    DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("res://docs/status"))
-    var result := image.save_png(ProjectSettings.globalize_path(OUTPUT_PATH))
+    var output_path: String = ProjectSettings.globalize_path("res://").path_join(OUTPUT_RELATIVE_PATH)
+    DirAccess.make_dir_recursive_absolute(output_path.get_base_dir())
+    var result := image.save_png(output_path)
     if result != OK:
         push_error("Unable to save screenshot: %s" % error_string(result))
         quit(5)
         return
 
-    print("CURRENT_VISUAL_SAVED=", OUTPUT_PATH)
+    print("CURRENT_VISUAL_SAVED=", OUTPUT_RELATIVE_PATH)
     quit(0)
