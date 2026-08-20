@@ -14,7 +14,7 @@ on:
       - ".github/workflows/current-visual.yml"
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: current-visual-${{ github.repository }}-${{ github.ref }}
@@ -71,6 +71,18 @@ jobs:
               json.dump(data, handle, indent=2)
               handle.write("\n")
           PY
+      - name: Commit accepted visual to capture branch
+        if: github.event_name == 'push'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- docs/status/current.png docs/status/current.json
+          if git diff --cached --quiet; then
+            echo "Visual evidence unchanged."
+          else
+            git commit -m "docs: refresh current runtime visual"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
       - name: Upload visual evidence
         uses: actions/upload-artifact@v4
         with:
