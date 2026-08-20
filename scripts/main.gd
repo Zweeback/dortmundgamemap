@@ -43,7 +43,8 @@ func _process(_delta: float) -> void:
 func _try_start_streaming_manager() -> void:
 	var mgr := STREAMING_MANAGER_SCRIPT.new()
 	mgr.name = "WorldStreamingManager"
-	if not mgr.load_index():
+	if not mgr.load_index() or not mgr.has_packaged_render_assets():
+		push_warning("World streaming assets are incomplete; using the visible fallback city.")
 		mgr.free()
 		return
 	add_child(mgr)
@@ -179,6 +180,9 @@ func _build_placeholder_city() -> void:
 	city_root = Node3D.new()
 	city_root.name = "DortmundPlaceholder"
 	add_child(city_root)
+	# Keep the bird's-eye camera framed to the actual placeholder instead of
+	# the full connected-world extent used by packaged geodata.
+	city_size_xz = Vector2(126.0, 126.0)
 	var block_mat := StandardMaterial3D.new()
 	block_mat.albedo_color = Color(0.46, 0.50, 0.56)
 	block_mat.roughness = 0.95
