@@ -4,7 +4,7 @@
 
 ![Current runtime visual](docs/status/current.png)
 
-Automated CI capture of the configured main scene. The current evidence shows HUD/input chrome but no visible world geometry; this is an explicit spawn/loading/camera acceptance gap, not a finished-world claim. Provenance: [`docs/status/current.json`](docs/status/current.json).
+Automated CI capture of the configured main scene. When connected-world render bundles are unavailable, the runtime now falls back to the visible placeholder city instead of presenting an empty authoritative streaming state. Provenance: [`docs/status/current.json`](docs/status/current.json).
 
 
 Godot 4.7.1 project for a georeferenced, walkable Dortmund world.
