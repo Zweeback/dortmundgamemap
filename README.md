@@ -1,5 +1,12 @@
 # DortmundGameMap
 
+## Current visual
+
+![Current runtime visual](docs/status/current.png)
+
+Automated CI capture of the configured main scene. The current evidence shows HUD/input chrome but no visible world geometry; this is an explicit spawn/loading/camera acceptance gap, not a finished-world claim. Provenance: [`docs/status/current.json`](docs/status/current.json).
+
+
 Godot 4.7.1 project for a georeferenced, walkable Dortmund world.
 
 ## Current milestone
