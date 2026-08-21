@@ -16,6 +16,7 @@ var city_size_xz := Vector2(1336.0, 1140.0)
 var world_cell
 var using_stream_cell := false
 var streaming_manager: WorldStreamingManager = null
+var _streaming_play_ready := false
 
 func _ready() -> void:
 	_build_environment()
@@ -31,7 +32,10 @@ func _ready() -> void:
 	if streaming_manager != null:
 		streaming_manager.player_ref = player
 		streaming_manager.collision_ready.connect(_on_streaming_collision_ready)
+		player.spawn_resolved.connect(_on_player_spawn_resolved)
 		_apply_streaming_spawn()
+		print("SPAWN_HANDSHAKE_ARMED position=%s" % player.global_position)
+		streaming_manager.update_streaming(player.global_position)
 	_build_map_camera()
 	_build_hud()
 
@@ -48,9 +52,6 @@ func _try_start_streaming_manager() -> void:
 		return
 	add_child(mgr)
 	streaming_manager = mgr
-	# Seed streaming at the anchor spawn so the right cells begin loading immediately.
-	var xz := mgr.spawn_godot_xz
-	mgr.update_streaming(Vector3(xz.x, 0.0, xz.y))
 
 
 func _apply_streaming_spawn() -> void:
@@ -66,7 +67,25 @@ func _apply_streaming_spawn() -> void:
 ## Triggers a deferred spawn Y re-resolution to fix the first-frame race.
 func _on_streaming_collision_ready() -> void:
 	if player != null:
+		print("SPAWN_COLLISION_READY received")
 		player.resolve_spawn_when_ready()
+
+func _on_player_spawn_resolved(position_3d: Vector3) -> void:
+	_streaming_play_ready = true
+	print("SPAWN_READY_FOR_PLAY position=%s" % position_3d)
+	_on_player_coordinates_changed(position_3d)
+	if map_mode:
+		toggle_map()
+
+func _on_player_coordinates_changed(position_3d: Vector3) -> void:
+	if hud == null:
+		return
+	var current_cell_id := ""
+	var active_cell_count := 0
+	if streaming_manager != null:
+		current_cell_id = streaming_manager.get_current_cell_id(position_3d)
+		active_cell_count = streaming_manager.get_active_cell_count()
+	hud.update_runtime_metrics(position_3d, current_cell_id, active_cell_count)
 
 
 func _build_stream_cell() -> bool:
@@ -235,12 +254,16 @@ func _build_hud() -> void:
 	hud.sprint_changed.connect(player.set_touch_sprint)
 	hud.map_pressed.connect(toggle_map)
 	hud.reset_pressed.connect(player.reset_to_spawn)
-	player.coordinates_changed.connect(hud.update_position)
-	hud.set_map_mode(true)
+	player.coordinates_changed.connect(_on_player_coordinates_changed)
+	hud.set_map_mode(map_mode)
+	_on_player_coordinates_changed(player.global_position)
 
 func toggle_map() -> void:
+	if map_mode and streaming_manager != null and not _streaming_play_ready:
+		print("PLAY_BLOCKED_WAITING_FOR_STREAM")
+		return
 	map_mode = not map_mode
-	player.controls_enabled = not map_mode
+	player.controls_enabled = not map_mode and (streaming_manager == null or _streaming_play_ready)
 	player.set_touch_move(Vector2.ZERO)
 	player.set_touch_sprint(false)
 	if player.camera:
