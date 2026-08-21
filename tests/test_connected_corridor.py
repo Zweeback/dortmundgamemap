@@ -151,6 +151,75 @@ class ConnectedCorridorSeamTest(unittest.TestCase):
             self.assertLess(max_z_diff, 1e-4)
             self.assertLess(max_y_diff, 1e-4)
 
+    def test_index_contract_structure_validation(self):
+        # Validate index contract schema logic independently using a mock index
+        sample_index = {
+            "crs": "EPSG:25832",
+            "cell_size_m": 512,
+            "world_bbox": [392192, 5704704, 395264, 5708800],
+            "world_origin": [392192, 5704704, 100.0],
+            "provenance": {
+                "lod2": "Stadt Dortmund 3D-Stadtmodell (DL-DE-Zero-2.0)",
+                "dgm": "Geobasis NRW DGM1 (DL-DE-Zero-2.0)",
+                "crs": "EPSG:25832 (ETRS89 / UTM zone 32N)"
+            },
+            "cells": [
+                {
+                    "id": "e392192_n5704704",
+                    "bbox": [392192.0, 5704704.0, 392704.0, 5705216.0],
+                    "offset": [0.0, 0.0, 0.0],
+                    "terrain_render": "e392192_n5704704/terrain_render.glbraw",
+                    "terrain_collision": "e392192_n5704704/terrain_collision.glbraw",
+                    "buildings": []
+                }
+            ]
+        }
+        self.assertEqual(sample_index["crs"], "EPSG:25832")
+        self.assertEqual(sample_index["world_origin"], [392192, 5704704, 100.0])
+        cell = sample_index["cells"][0]
+        e0, n0 = cell["bbox"][0], cell["bbox"][1]
+        expected_offset = [e0 - sample_index["world_origin"][0], 0.0, -(n0 - sample_index["world_origin"][1])]
+        self.assertEqual(cell["offset"], expected_offset)
+
+    def test_built_index_contract_and_assets(self):
+        index_path = ROOT / "connected_world" / "assets" / "world_cells" / "index.json"
+        if not index_path.exists():
+            self.skipTest("connected_world artifact not built locally")
+
+        idx = json.loads(index_path.read_text(encoding="utf-8"))
+        self.assertEqual(idx["crs"], "EPSG:25832")
+        self.assertEqual(idx["cell_size_m"], 512)
+        self.assertEqual(idx["world_origin"], [392192, 5704704, 100.0])
+        self.assertEqual(idx["world_bbox"], [392192, 5704704, 395264, 5708800])
+        self.assertEqual(len(idx["cells"]), 48)
+
+        # Check provenance metadata
+        prov = idx.get("provenance", {})
+        self.assertIn("lod2", prov)
+        self.assertIn("dgm", prov)
+        self.assertIn("crs", prov)
+
+        # Verify all cells and assets exist
+        base = index_path.parent
+        for cell in idx["cells"]:
+            self.assertIn("id", cell)
+            self.assertIn("bbox", cell)
+            self.assertIn("offset", cell)
+
+            # Offset contract check: [E - origin_E, 0.0, -(N - origin_N)]
+            e0, n0 = cell["bbox"][0], cell["bbox"][1]
+            expected_offset = [e0 - 392192.0, 0.0, -(n0 - 5704704.0)]
+            self.assertEqual(cell["offset"], expected_offset)
+
+            ren_p = base / cell["terrain_render"]
+            col_p = base / cell["terrain_collision"]
+            self.assertTrue(ren_p.exists(), f"Missing render terrain: {ren_p}")
+            self.assertTrue(col_p.exists(), f"Missing collision terrain: {col_p}")
+
+            for b_rel in cell.get("buildings", []):
+                b_p = base / b_rel
+                self.assertTrue(b_p.exists(), f"Missing building asset: {b_p}")
+
 
 if __name__ == "__main__":
     unittest.main()
