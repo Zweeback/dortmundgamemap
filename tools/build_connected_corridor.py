@@ -91,7 +91,7 @@ def main() -> None:
             cid = f"e{e}_n{n}"
             ts = tiles_for_bbox(bbox)
             required_tiles.update(ts)
-            spec = {"id": cid, "crs": CRS, "size_m": CELL_SIZE, "bbox": bbox, "bbox_wgs84": [west, south, east, north], "sources": {"lod2_tiles": [], "dgm_coverage_id": "nw_dgm", "dop_coverage_id": "nw_dop", "alkis_type_name": "adv_alkis_gebaeude"}}
+            spec = {"id": cid, "crs": CRS, "size_m": CELL_SIZE, "bbox": bbox, "bbox_wgs84": [west, south, east, north], "sources": {"lod2_tiles": [], "dgm_coverage_id": "nw_dgm", "dop_coverage_id": "nw_dop", "alkis_type_name": "ALKIS_ADV:ALKIS_ADV_GebaeudeBauwerk"}}
             sp = specs / f"{cid}.json"
             sp.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
             cells.append((cid, bbox, sp, ts))
@@ -136,7 +136,9 @@ def main() -> None:
             dst = c_out / f"buildings_{ti}.glb"
             proc = subprocess.run([py, "tools/citygml_to_glb.py", str(src), "--cell", str(spec_path), "--out", str(dst), "--vertical-origin", str(VERTICAL_ORIGIN)], text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             print(proc.stdout)
-            if proc.returncode == 0 and dst.exists():
+            if proc.returncode != 0:
+                raise RuntimeError(f"citygml_to_glb failed (rc={proc.returncode}) for {src}:\n{proc.stdout}")
+            if dst.exists():
                 building_files.append(dst.name)
         index["cells"].append({
             "id": cid,
