@@ -13,7 +13,7 @@ var info_label: Label
 var mode_label: Label
 var sprint_button: Button
 var map_button: Button
-var _fps_accum := 0.0
+var _last_debug_signature := ""
 
 func _ready() -> void:
 	_build_ui()
@@ -38,7 +38,7 @@ func _build_ui() -> void:
 	root.add_child(mode_label)
 
 	info_label = Label.new()
-	info_label.text = "x 0  y 0  z 0"
+	info_label.text = "x 0.0  z 0.0  |  cell --  |  active 0  |  0 FPS"
 	info_label.add_theme_font_size_override("font_size", 14)
 	info_label.position = Vector2(22, 74)
 	root.add_child(info_label)
@@ -126,8 +126,19 @@ func _make_button(text_value: String, width: float, height: float) -> Button:
 	return button
 
 func update_position(pos: Vector3) -> void:
+	update_runtime_metrics(pos, "", 0)
+
+func update_runtime_metrics(pos: Vector3, current_cell_id: String, active_cell_count: int) -> void:
 	if info_label:
-		info_label.text = "x %.1f   y %.1f   z %.1f   |   %d FPS" % [pos.x, pos.y, pos.z, int(Engine.get_frames_per_second())]
+		var display_cell := current_cell_id if not current_cell_id.is_empty() else "--"
+		info_label.text = "x %.1f  z %.1f  |  cell %s  |  active %d  |  %d FPS" % [
+			pos.x, pos.z, display_cell, active_cell_count, int(Engine.get_frames_per_second())]
+		var debug_signature := "x=%.1f|z=%.1f|cell=%s|active=%d" % [
+			pos.x, pos.z, display_cell, active_cell_count]
+		if debug_signature != _last_debug_signature:
+			_last_debug_signature = debug_signature
+			print("HUD_DEBUG_METRICS %s fps=%d" % [
+				debug_signature, int(Engine.get_frames_per_second())])
 
 func set_map_mode(enabled: bool) -> void:
 	if mode_label:

@@ -63,7 +63,7 @@ def cells_in_radius(cells_meta: list, player_xz: tuple, load_radius: float) -> l
 # ─────────────────────────────────────────────────────────────────────────────
 
 SPAWN_ABOVE_SURFACE = 1.25
-MAX_RESOLVE_RETRIES = 8
+MAX_RESOLVE_RETRIES = 24
 
 
 def resolve_surface_y(pos_x: float, pos_z: float,
@@ -275,7 +275,7 @@ class TestDeferredSpawnResolve(unittest.TestCase):
 
     def test_gives_up_gracefully(self):
         """After MAX_RESOLVE_RETRIES misses the player should use the fallback, not crash."""
-        final_y, retries, gave_up = deferred_resolve(1.25, [None] * 20)
+        final_y, retries, gave_up = deferred_resolve(1.25, [None] * (MAX_RESOLVE_RETRIES + 5))
         self.assertTrue(gave_up)
         self.assertLessEqual(retries, MAX_RESOLVE_RETRIES)
 
